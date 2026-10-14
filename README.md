@@ -413,7 +413,7 @@ The `capability` group is the one-capability CLI surface over the shared funnel:
 ./bin/amlas capability mention @dataset:silver/clean
 ```
 
-> **Dataset paths:** the examples above use a local path, which works with the in-process (offline) backend. With the managed backend on live AWS, `data_quality_flow` runs through DataBrew and `dataset_uri` must be an `s3://` URI. A local path fails with `expected an s3:// URI for the managed adapter`.
+> **Dataset paths:** The examples above use local CSV paths and require the in-process backend (`DQ_BACKEND=inprocess` or offline mode). When `DataQualityBackend` resolves to DataBrew, the initial profile step requires `dataset_uri` to be an `s3://` URI.
 
 ### 4. Python API
 
