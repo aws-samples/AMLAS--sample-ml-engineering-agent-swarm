@@ -11,6 +11,8 @@ Inherits [../AGENTS.md](../AGENTS.md); this document owns the files directly in 
 ## Local Contracts
 
 - Maintain the interfaces and file formats owned by the modules listed below; parent contracts apply.
+- Dependency audit inputs retain uv-exported hashes; `pip-audit --disable-pip`
+  audits that exact pre-resolved lock without constructing a nested resolver environment.
 - Owned files: `public-release.yml`.
 
 ## Work Guidance

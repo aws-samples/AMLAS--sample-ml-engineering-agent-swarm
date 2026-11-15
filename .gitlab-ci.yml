@@ -43,7 +43,7 @@ pip-audit:
   script:
     - uv sync --frozen --extra security
     - uv export --frozen --format requirements-txt --no-emit-project > "$TMPDIR/requirements.txt"
-    - uv run pip-audit -r "$TMPDIR/requirements.txt" --strict
+    - uv run pip-audit --disable-pip -r "$TMPDIR/requirements.txt" --strict
 
 detect-secrets:
   stage: security

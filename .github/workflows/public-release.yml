@@ -34,7 +34,7 @@ jobs:
       - run: uv run --frozen --no-sync ruff check src scripts infra tests
       - run: uv run --frozen --no-sync bandit -c pyproject.toml -r src scripts infra -lll
       - run: uv export --frozen --format requirements-txt --no-emit-project > "${RUNNER_TEMP}/requirements.txt"
-      - run: uv run --frozen --no-sync pip-audit -r "${RUNNER_TEMP}/requirements.txt" --strict
+      - run: uv run --frozen --no-sync pip-audit --disable-pip -r "${RUNNER_TEMP}/requirements.txt" --strict
       - run: git ls-files -z | xargs -0 uv run --frozen --no-sync detect-secrets-hook --baseline .secrets.baseline
       - run: uv run --frozen --no-sync cyclonedx-py requirements "${RUNNER_TEMP}/requirements.txt" --output-format JSON -o sbom.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
