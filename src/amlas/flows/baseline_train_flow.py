@@ -185,7 +185,7 @@ def run_baseline_train_flow(
 
 def _is_accept(report: dict[str, Any]) -> bool:
     """Interpret an Arbiter report dict as accept/reject (defensive across shapes)."""
-    for key in ("accepted", "passed", "is_accept"):
+    for key in ("passes_acceptance", "accepted", "passed", "is_accept"):
         if key in report:
             return bool(report[key])
     verdict = str(report.get("verdict", report.get("decision", ""))).strip().lower()
