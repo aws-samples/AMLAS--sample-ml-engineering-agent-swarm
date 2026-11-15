@@ -74,7 +74,8 @@ def test_release_executes_module_pytest_without_dropping_provisioned_extras():
 
 def test_release_keeps_required_security_checks_and_read_only_permissions():
     job = _verify_job()
-    commands = "\n".join(_run_commands())
+    run_commands = _run_commands()
+    commands = "\n".join(run_commands)
     for check in (
         "verify_repository_governance.py",
         "ruff check",
@@ -84,6 +85,15 @@ def test_release_keeps_required_security_checks_and_read_only_permissions():
         "cyclonedx-py",
     ):
         assert check in commands
+    export = next(command for command in run_commands if "uv export " in command)
+    audit = next(command for command in run_commands if "pip-audit" in command)
+    assert "--no-hashes" not in shlex.split(export)
+    assert "--disable-pip" in shlex.split(audit)
+    assert "--no-deps" not in shlex.split(audit)
+    gitlab = yaml.safe_load((ROOT / ".gitlab-ci.yml").read_text())
+    gitlab_audit = "\n".join(gitlab["pip-audit"]["script"])
+    assert "--disable-pip" in shlex.split(gitlab_audit)
+    assert "--no-deps" not in shlex.split(gitlab_audit)
     assert yaml.safe_load(WORKFLOW.read_text())["permissions"] == {"contents": "read"}
     assert not job.get("continue-on-error", False)
     assert all(not step.get("continue-on-error", False) for step in job["steps"])
