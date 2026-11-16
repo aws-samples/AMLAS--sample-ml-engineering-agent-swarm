@@ -7,7 +7,15 @@ import sys
 
 from ._runtime_guard import apply_openmp_safety_guard
 
-__version__ = "0.1.0"
+
+def __getattr__(name: str) -> str:
+    """Resolve ``__version__`` on first access; nothing about the version runs at import."""
+    if name == "__version__":
+        from ._version import package_version
+
+        return package_version()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 # macOS duplicate-libomp OpenMP crash guard (found in  e2e).
 # ─────────────────────────────────────────────────────────────────

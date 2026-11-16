@@ -107,17 +107,21 @@ cross-project security requirements, and the top-level verification contract.
 ### Release sequence
 
 1. Branch from the current GitLab `main`.
-2. Prepare a public-release candidate and pass the complete sanitization,
+2. For a release that changes what a user or maintainer sees, raise the counter in root
+   `VERSION` by one in the release change. Update the mapped `pyproject.toml` version and
+   `uv.lock`. Move the Unreleased changelog lines under the new version heading. A release
+   that changes nothing a user or maintainer sees keeps its `VERSION`.
+3. Prepare a public-release candidate and pass the complete sanitization,
    existing-feature regression, and core functional checks below on that exact candidate.
-3. Present the exact candidate tree hash and material scan results for human approval.
-4. After explicit approval, publish that exact tree to GitHub `main` as one new commit
+4. Present the exact candidate tree hash and material scan results for human approval.
+5. After explicit approval, publish that exact tree to GitHub `main` as one new commit
    on top of the current GitHub `main`, using a plain push that is never forced. The
    new release commit must have the approved release tree. The first GitHub release
    was a root commit, and every later GitHub release adds one commit. Undo a wrong
    release with a revert commit.
-5. Synchronize GitLab `main` to the approved GitHub tree through a GitLab merge
+6. Synchronize GitLab `main` to the approved GitHub tree through a GitLab merge
    request, preserving all GitLab parents, branches, tags, and historical commits.
-6. Fetch both remotes and prove that the two `main` refs resolve to the same Git tree.
+7. Fetch both remotes and prove that the two `main` refs resolve to the same Git tree.
 
 No change reaches GitHub until a human approves the sanitized public snapshot.
 Automatic dependency-update PRs and other public branch-writing automation are disabled;
@@ -207,11 +211,28 @@ synchronization before the approved GitHub tree is available.
 - Follow Keep a Changelog 1.1.0 with Added, Changed, Deprecated, Removed and Fixed groups,
   shown only when they hold a line.
 - Use one physical line per bullet, in past tense, naming the option, command, file or behaviour.
-- At release, move Unreleased lines under a `## [YYYY-MM-DD]` heading for the release date,
-  newest first, while the package version stays one string.
+- At release, move the Unreleased lines under a `## [N.NN] - YYYY-MM-DD` heading that carries
+  the new `VERSION` and the release date, newest first. Keep an empty `## [Unreleased]` section
+  on top.
 - Include no work-item identifiers, person names, account numbers, host names, machine paths
   or dates in lines.
 - Keep the shape pinned by `tests/test_changelog_shape.py`.
+
+### Versioning
+
+- Root `VERSION` is the one source of the project version. It holds `N.NN` and one newline.
+  `N` is the release line. `NN` is a counter of at least two digits without extra leading zeros.
+- `pyproject.toml` carries the mapped package version `N.<NN as an integer>.0`.
+  Release `0.06` maps to package version `0.6.0`. `uv.lock` records the same version for the
+  project's own package.
+- State the version nowhere else. The application reports it through `src/amlas/_version.py`,
+  which reads `VERSION` in a source checkout and the installed package metadata otherwise.
+- The release change for every release that changes what a user or maintainer sees raises the
+  counter in root `VERSION` by one. Edit `VERSION` and the `pyproject.toml` version together.
+  Regenerate `uv.lock` with `uv lock` so that only the project's own version line changes.
+  Head the release section of `CHANGELOG.md` with the new version. No other change edits
+  `VERSION`.
+- Keep these rules pinned by `tests/test_version_single_source.py`.
 
 ### History preservation
 

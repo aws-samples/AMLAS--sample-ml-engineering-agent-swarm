@@ -1,10 +1,14 @@
 # Changelog
 
-This file lists notable changes for users and maintainers. The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/). Releases are identified by their release date because the package version has stayed `0.1.0`.
+This file lists notable changes for users and maintainers. The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/).
+
+Each release has a version `N.NN` held in the root `VERSION` file. `N` is the release line. `NN` is a counter of at least two digits that rises by one with every release that changes what a user or maintainer sees. The package version is the same number written as `N.<NN as an integer>.0`. For example, release `0.06` is package version `0.6.0`.
+
+The numbers `0.01` to `0.05` were assigned afterwards, and those releases carried the package version `0.1.0`.
 
 ## [Unreleased]
 
-## [2026-11-16]
+## [0.06] - 2026-11-16
 
 ### Added
 
@@ -43,7 +47,7 @@ This file lists notable changes for users and maintainers. The format follows [K
 - Fixed coding-task specification tools returning classification stubs by making the tools state the next call to make.
 - Fixed baseline training registration to follow the `passes_acceptance` result of the Arbiter report.
 
-## [2026-10-19]
+## [0.05] - 2026-10-19
 
 ### Added
 
@@ -53,7 +57,7 @@ This file lists notable changes for users and maintainers. The format follows [K
 
 - Fixed the README solution summary rendering as a quote block, making it an ordinary paragraph.
 
-## [2026-10-15]
+## [0.04] - 2026-10-15
 
 ### Added
 
@@ -69,7 +73,7 @@ This file lists notable changes for users and maintainers. The format follows [K
 
 - Fixed the omission of plural numeric prediction objectives from generated specifications.
 
-## [2026-10-14]
+## [0.03] - 2026-10-14
 
 ### Added
 
@@ -90,7 +94,7 @@ This file lists notable changes for users and maintainers. The format follows [K
 - Fixed empty AWS profile values loaded from `.env` breaking CLI discovery of deployed application resources.
 - Added missing test-suite prerequisites to the GitHub Actions workflow and removed its unsupported temporary-directory setting.
 
-## [2026-10-13]
+## [0.02] - 2026-10-13
 
 ### Added
 
@@ -110,7 +114,7 @@ This file lists notable changes for users and maintainers. The format follows [K
 
 - Fixed default relative output failures in the managed runtime.
 
-## [2026-09-15]
+## [0.01] - 2026-09-15
 
 ### Added
 

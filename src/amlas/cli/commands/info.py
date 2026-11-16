@@ -9,6 +9,7 @@ from typing import Any
 
 import click
 
+from ..._version import package_version
 from ...config.aws_region import resolve_aws_region
 from ..display import console, print_json_output, print_table
 
@@ -22,7 +23,7 @@ def info() -> None:
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON.")
 def version(as_json: bool) -> None:
     """Show the platform version."""
-    ver = "0.1.0"
+    ver = package_version()
 
     if as_json:
         print_json_output({"version": ver, "name": "amlas"})

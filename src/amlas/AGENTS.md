@@ -115,6 +115,7 @@ Inherits [../AGENTS.md](../AGENTS.md); this document owns the files directly in 
   `RUNTIME_ENV_PACK_EXPANDED keys=<n> sha256=<digest>` (no values) and refuses a pack that a `.env`
   file adds. Without a pack it changes nothing. Stage images never receive a pack: adapters pass
   their values as explicit job Environment.
+- `_version.py:package_version` — Returns the package version without stating it in the source. A source checkout reads root `VERSION` and maps `N.NN` to `N.<NN as an integer>.0`. An installed package reads its own distribution metadata. A copy with neither reports `unknown`. `__init__.py` resolves `__version__` through it on first access and does no version work at import. `amlas --version` and `amlas info version` print it. It uses only the standard library.
 - `_runtime_guard.py:apply_openmp_safety_guard` — Neutralise the macOS duplicate-libomp OpenMP abort (behaviour-preserving).
 - `_runtime_guard.py:install_error_excepthook` — Funnel ANY uncaught exception into the centralized ``ERROR_LOG`` (process safety net).
 - `api.py:preview` — Plan-Mode preview a capability from Python — build the read-only plan, run nothing.
@@ -175,7 +176,7 @@ Inherits [../AGENTS.md](../AGENTS.md); this document owns the files directly in 
   its existing propagation through worker finally. Existing status/report semantics and worker
   lifetime remain unchanged; a warning does not prove native cause or recovery.
 
-- Owned files: `__init__.py`, `_build.py`, `_runtime_env_pack.py`, `_runtime_guard.py`, `api.py`, `app.py`, `orchestrator.py`, `prompts.py`, `thesis_experiment.py`.
+- Owned files: `__init__.py`, `_build.py`, `_runtime_env_pack.py`, `_runtime_guard.py`, `_version.py`, `api.py`, `app.py`, `orchestrator.py`, `prompts.py`, `thesis_experiment.py`.
 
 - api.run_prompt transparently returns the chat engine response, including closed guardrail intervention DATA when verified by the real SDK result. Guardrail action remains UNKNOWN and assessment unavailable; final text and existing execution records are preserved. This outcome is not native admission, blocked-content proof, permission, retry or ML completion. No API input/normalization or guardrail policy change is introduced.
 

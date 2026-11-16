@@ -39,6 +39,11 @@ For any change a user or maintainer would notice, add one line under `## [Unrele
 `CHANGELOG.md`. Use the Added, Changed, Deprecated, Removed or Fixed group, and write one
 physical line in past tense naming the option, command or behaviour.
 
+Releases are numbered `N.NN`. The root `VERSION` file is the one source of that number.
+Maintainers raise it in the release change, together with the `pyproject.toml` version, and
+move the Unreleased lines under a `## [N.NN] - YYYY-MM-DD` heading.
+Leave `VERSION` unchanged in any other change.
+
 ## Code of Conduct
 
 This project has adopted the [Amazon Open Source Code of Conduct](https://aws.github.io/code-of-conduct).

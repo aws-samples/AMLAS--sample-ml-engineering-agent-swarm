@@ -866,7 +866,7 @@ Inherits [../AGENTS.md](../AGENTS.md); this document owns the files directly in 
   raw reads and enforce common deadlines before/after HEAD. Post-Create decode
   faults retain original opaque handles across repeated catalog prompts; resource
   probe errors refuse while all four provider paths and fixed endpoint probes remain.
-- Owned files: `test_qwen_sft_durable_submission.py`, `test_campaign_state.py`, `runtime_image_acceptance.py`, `test_astra_safeguards.py`, `test_baseline_train_flow.py`, `test_cli_persisted_discovery.py`, `test_client_deployment_namespace.py`, `test_cloudtrail_capacity_preflight.py`, `test_deployment_manifest_cleanup.py`, `test_github_workflow_contract.py`, `test_infra_deployment_namespace.py`, `test_managed_job_ownership.py`, `test_manifest_cli_credential_chain.py`, `test_pipeline_dag_compilation.py`, `test_prepare_host.py`, `test_region_client_metadata.py`, `test_repository_governance.py`, `test_repository_policy.py`, `test_research_public_fallback.py`, `test_runtime_binding_completeness.py`, `test_runtime_default_endpoint.py`, `test_runtime_deployment_advisory.py`, `test_runtime_ownership_controller.py`, `test_runtime_role_lifecycle_advisory.py`, `test_runtime_role_portability.py`, `test_setup_deployment_namespace.py`, `test_setup_owned_publication.py`, `test_setup_reuse_witness.py`, `test_shell_entrypoint_advisory.py`, `test_tavily_setup_choice.py`, `model_acquisition_fixtures.py`, `test_model_weight_acquisition_core.py`, `test_managed_model_weight_acquisition.py`, `test_model_weight_acquisition_binding.py`.
+- Owned files: `test_version_single_source.py`, `test_qwen_sft_durable_submission.py`, `test_campaign_state.py`, `runtime_image_acceptance.py`, `test_astra_safeguards.py`, `test_baseline_train_flow.py`, `test_cli_persisted_discovery.py`, `test_client_deployment_namespace.py`, `test_cloudtrail_capacity_preflight.py`, `test_deployment_manifest_cleanup.py`, `test_github_workflow_contract.py`, `test_infra_deployment_namespace.py`, `test_managed_job_ownership.py`, `test_manifest_cli_credential_chain.py`, `test_pipeline_dag_compilation.py`, `test_prepare_host.py`, `test_region_client_metadata.py`, `test_repository_governance.py`, `test_repository_policy.py`, `test_research_public_fallback.py`, `test_runtime_binding_completeness.py`, `test_runtime_default_endpoint.py`, `test_runtime_deployment_advisory.py`, `test_runtime_ownership_controller.py`, `test_runtime_role_lifecycle_advisory.py`, `test_runtime_role_portability.py`, `test_setup_deployment_namespace.py`, `test_setup_owned_publication.py`, `test_setup_reuse_witness.py`, `test_shell_entrypoint_advisory.py`, `test_tavily_setup_choice.py`, `model_acquisition_fixtures.py`, `test_model_weight_acquisition_core.py`, `test_managed_model_weight_acquisition.py`, `test_model_weight_acquisition_binding.py`.
 
 - Model normal-integration tests use the installed SDK with closed providers
   to prove startup0SDK/SSM, managed-only port selection, pure catalog discovery,
@@ -1362,10 +1362,23 @@ validate/save/private planning bind and legacy tabular contracts remain intact.
   Keep the module's `without_ids` separate from the product helper so the helper never checks itself.
   This is component evidence. It establishes nothing about a deployed runtime, a native job or a worker loss.
 
-- `tests/test_changelog_shape.py` reads root `CHANGELOG.md`, root `AGENTS.md` and `CONTRIBUTING.md`. It requires
-  the linked introduction, section order, allowed groups, bullet format and content rules. Both rule files must
-  require one Unreleased line for every user- or maintainer-visible change in the same change. The test checks
-  shape and rule text, not whether bullets are true or every change has a bullet.
+- `tests/test_changelog_shape.py` reads root `CHANGELOG.md`, root `AGENTS.md` and `CONTRIBUTING.md`.
+  It requires the linked introduction that names `VERSION` and `## [Unreleased]` first.
+  It requires release headings of the form `## [N.NN] - YYYY-MM-DD` with strictly decreasing versions
+  and dates that never increase. It requires allowed groups, bullet format and content rules.
+  Both rule files must require one Unreleased line for every user- or maintainer-visible change in the same
+  change and the `VERSION` step at release. Drifted heading lists fed to its helper must be reported.
+  It checks shape and rule text. It does not check whether bullets are true or every change has a bullet.
+
+- `tests/test_version_single_source.py` reads root `VERSION`, `pyproject.toml`, `uv.lock`, `CHANGELOG.md`
+  and the Python files under `src/amlas`. It requires `VERSION` to hold `N.NN` and one newline.
+  It requires the `pyproject.toml` project version to equal the mapped `N.<NN as an integer>.0`,
+  with no second version source. It requires the `uv.lock` record of the project's own package to equal it.
+  It requires the newest release heading of `CHANGELOG.md` to name the version in `VERSION`.
+  It requires no version literal in the application source. It requires `amlas --version`,
+  `amlas info version --json` and `amlas.__version__` to report the mapped version from a checkout.
+  Its helpers are also fed drifted inputs and must report each one. It does not build or install the package.
+  Wheel and source-distribution metadata remain a release build check.
 - `test_qwen_cpu_case_file_provisioning.py` (added 2026-11-15): Contains 30 offline tests with no skip. Helper tests use stand-in files and parameterized pins through a local file address or a loopback HTTP server. They check read-only writes, hash and size failures, missing sources, HTTP 404, disallowed redirects, temporary 503 retries, the one-byte read bound, and default HTTPS requests. They check verified-file reuse without fetching, differing named-file refusal without requests or writes, and preservation of existing destinations. Parsed constants must equal SOURCE_REPO, SOURCE_REVISION, SOURCE_FILENAME, SOURCE_SHA256, SOURCE_BYTES. The address must be the public resolve address of that revision. Incomplete, duplicate, computed or misshapen constants refuse. Script tests copy the real script and helper into a temporary project with stand-in constants, metadata and `uv`. They check four exact `environment.sh` lines, export placement, sourced values, and failure without `environment.sh`. One test requires `AMLAS_TEST_HUMANEVAL_PARQUET` to name the provisioned file and checks product pins; absence fails. These tests make no public-source request. The real fetch is proven only by a script run with network.
 
 ## Work Guidance

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import click
 
+from .._version import package_version
 from .commands.capability import capability
 from .commands.config import config
 from .commands.data import data
@@ -37,7 +38,7 @@ def _install_error_surface() -> None:
 
 
 @click.group(name="amlas")
-@click.version_option(version="0.1.0", prog_name="amlas")
+@click.version_option(version=package_version(), prog_name="amlas")
 @click.option("--verbose", "-v", is_flag=True, default=False, help="Enable verbose/debug output.")
 @click.pass_context
 def cli(ctx: click.Context, verbose: bool) -> None:

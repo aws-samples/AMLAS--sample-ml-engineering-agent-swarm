@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import datetime
+import itertools
 import re
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 CHANGELOG = ROOT / "CHANGELOG.md"
@@ -13,7 +16,8 @@ TITLE = "# Changelog"
 FORMAT_URL = "https://keepachangelog.com/en/1.1.0/"
 UNRELEASED = "## [Unreleased]"
 GROUP_ORDER = ("Added", "Changed", "Deprecated", "Removed", "Fixed")
-RELEASE_HEADING = re.compile(r"^## \[(\d{4}-\d{2}-\d{2})\]$")
+RELEASE_HEADING = re.compile(r"^## \[(\d+)\.(\d{2,})\] - (\d{4}-\d{2}-\d{2})$")
+RELEASE_HEADING_FORM = "## [N.NN] - YYYY-MM-DD"
 BULLET = re.compile(r"^- [A-Z][^\n]*\.$")
 
 # Text a bullet must not carry. Path and host fragments are assembled so that this
@@ -73,6 +77,41 @@ def _sections() -> list[tuple[str, list[str]]]:
     return sections
 
 
+def release_heading_problems(headings: list[str]) -> list[str]:
+    """Return what is wrong with the level-two headings of a changelog, given in file order."""
+    problems = []
+    if not headings or headings[0] != UNRELEASED:
+        problems.append(f"the first section must be {UNRELEASED!r}")
+    if headings.count(UNRELEASED) > 1:
+        problems.append(f"{UNRELEASED!r} appears more than once")
+    releases = []
+    for heading in headings:
+        if heading == UNRELEASED:
+            continue
+        match = RELEASE_HEADING.match(heading)
+        if match is None:
+            problems.append(f"release heading is not {RELEASE_HEADING_FORM!r}: {heading!r}")
+            continue
+        line, counter, day = match.groups()
+        if line != str(int(line)) or counter != f"{int(counter):02d}":
+            problems.append(f"release heading version has a spare leading zero: {heading!r}")
+        try:
+            date = datetime.date.fromisoformat(day)
+        except ValueError:
+            problems.append(f"release heading carries no real date: {heading!r}")
+            continue
+        releases.append(((int(line), int(counter)), date, heading))
+    if not releases:
+        problems.append("the file lists no release")
+    for newer, older in itertools.pairwise(releases):
+        (version, date, heading), (older_version, older_date, older_heading) = newer, older
+        if version <= older_version:
+            problems.append(f"versions must strictly decrease: {heading!r} is followed by {older_heading!r}")
+        if date < older_date:
+            problems.append(f"dates must not increase: {heading!r} is followed by {older_heading!r}")
+    return problems
+
+
 def test_title_and_introduction() -> None:
     lines = _lines()
     assert lines[0] == TITLE
@@ -80,23 +119,47 @@ def test_title_and_introduction() -> None:
     introduction = [line for line in lines[1:first_section] if line]
     assert introduction, "the introduction is missing"
     assert FORMAT_URL in " ".join(introduction)
+    assert "`VERSION`" in " ".join(introduction), "the introduction must say where the version lives"
     for line in introduction:
         assert not line.startswith(("#", "-", " ")), f"introduction is plain sentences only: {line!r}"
     assert len(introduction) <= 3
 
 
-def test_unreleased_is_first_and_releases_are_newest_first() -> None:
+def test_unreleased_is_first_and_releases_are_versioned_newest_first() -> None:
     headings = [heading for heading, _ in _sections()]
     assert headings, "CHANGELOG.md has no sections"
-    assert headings[0] == UNRELEASED
-    assert headings.count(UNRELEASED) == 1
-    dates = []
-    for heading in headings[1:]:
-        match = RELEASE_HEADING.match(heading)
-        assert match is not None, f"release heading is not '## [YYYY-MM-DD]': {heading!r}"
-        dates.append(datetime.date.fromisoformat(match.group(1)))
-    assert dates, "the file lists no release"
-    assert dates == sorted(set(dates), reverse=True), "release headings must be unique and newest first"
+    assert release_heading_problems(headings) == []
+
+
+def test_aligned_headings_are_accepted() -> None:
+    assert release_heading_problems([UNRELEASED, "## [0.06] - 2026-01-02"]) == []
+    assert release_heading_problems([UNRELEASED, "## [1.00] - 2026-03-01", "## [0.123] - 2026-03-01"]) == []
+    assert release_heading_problems([UNRELEASED, "## [0.06] - 2026-01-02", "## [0.05] - 2026-01-02"]) == []
+
+
+@pytest.mark.parametrize(
+    "headings",
+    [
+        [],
+        [UNRELEASED],
+        ["## [0.06] - 2026-01-02"],
+        ["## [0.06] - 2026-01-02", UNRELEASED],
+        [UNRELEASED, UNRELEASED, "## [0.06] - 2026-01-02"],
+        [UNRELEASED, "## [2026-01-02]"],
+        [UNRELEASED, "## [0.06]"],
+        [UNRELEASED, "## [0.6.0] - 2026-01-02"],
+        [UNRELEASED, "## [0.6] - 2026-01-02"],
+        [UNRELEASED, "## [0.006] - 2026-01-02"],
+        [UNRELEASED, "## 0.06 - 2026-01-02"],
+        [UNRELEASED, "## [0.06] - 2026-13-02"],
+        [UNRELEASED, "## [0.06] 2026-01-02"],
+        [UNRELEASED, "## [0.05] - 2026-01-01", "## [0.06] - 2026-01-02"],
+        [UNRELEASED, "## [0.06] - 2026-01-02", "## [0.06] - 2026-01-01"],
+        [UNRELEASED, "## [0.06] - 2026-01-01", "## [0.05] - 2026-01-02"],
+    ],
+)
+def test_drifted_headings_are_reported(headings: list[str]) -> None:
+    assert release_heading_problems(headings) != []
 
 
 def test_sections_hold_only_the_allowed_groups_with_one_line_bullets() -> None:
@@ -143,8 +206,20 @@ def test_upkeep_rule_is_written_in_the_contract_and_the_contributor_guide() -> N
         "maintainer-visible change, in the same change.",
         "all changelogs except the root `CHANGELOG.md`",
         "`tests/test_changelog_shape.py`",
+        "`" + RELEASE_HEADING_FORM + "`",
+        "### Versioning",
+        "Root `VERSION` is the one source of the project version.",
+        "raises the counter in root `VERSION` by one",
+        "raise the counter in root `VERSION` by one",
+        "`tests/test_version_single_source.py`",
     ):
         assert statement in " ".join(contract.split()), f"contract lacks: {statement}"
     guide = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
     assert "## Changelog" in guide
-    assert "add one line under `## [Unreleased]` in `CHANGELOG.md`" in " ".join(guide.split())
+    for statement in (
+        "add one line under `## [Unreleased]` in `CHANGELOG.md`",
+        "The root `VERSION` file is the one source of that number.",
+        "`" + RELEASE_HEADING_FORM + "`",
+        "Leave `VERSION` unchanged in any other change.",
+    ):
+        assert statement in " ".join(guide.split()), f"contributor guide lacks: {statement}"
