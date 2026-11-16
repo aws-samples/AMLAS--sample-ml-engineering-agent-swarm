@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Register the classification, regression, detection and segmentation grading implementations.
+Own predictive grader registrations and the fixed private coding-report branch.
 
 ## Ownership
 
@@ -11,7 +11,8 @@ Inherits [../AGENTS.md](../AGENTS.md); this document owns the files directly in 
 ## Local Contracts
 
 - Maintain the interfaces and file formats owned by the modules listed below; parent contracts apply.
-- Owned files: `__init__.py`, `classification.py`, `detection.py`, `regression.py`, `segmentation.py`.
+- `coding.py` grades only the closed private HumanEval164 pass_at_1 profile through Arbiter's early branch. Native admission, containment and semantic grading integrity remain unqualified, so acceptance is always false. Predictive registration and behavior remain unchanged.
+- Owned files: `__init__.py`, `classification.py`, `coding.py`, `detection.py`, `regression.py`, `segmentation.py`.
 
 ## Work Guidance
 

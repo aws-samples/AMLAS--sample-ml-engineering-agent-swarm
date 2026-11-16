@@ -33,6 +33,12 @@ from strands import Agent
 from .._build import build_agent, compose_system_prompt
 from ..prompts import stack_prompts
 from ..tools.agent_tools import data_verify_tool, leakage_check_tool
+from ..tools.coding_cases import freeze_coding_cases, get_coding_case_freeze, list_coding_case_catalog
+from ..tools.coding_preparation import (
+    get_coding_preparation,
+    list_coding_preparation_profiles,
+    prepare_coding_dataset,
+)
 from ..tools.data_etl_neutral import (
     apply_imputation_via_port,
     evaluate_dq,
@@ -40,6 +46,7 @@ from ..tools.data_etl_neutral import (
     run_processing_job,
     run_profile,
 )
+from ..tools.dataset_inspection import get_dataset_inspection, inspect_acquired_dataset
 from ..tools.deploy_neutral import (
     build_risk_register,
     compile_model,
@@ -64,6 +71,11 @@ from ..tools.deploy_neutral import (
 from ..tools.dispatch_preflight import dispatch_preflight
 from ..tools.git_tools import commit_artifact, open_pr
 from ..tools.governance_neutral import check_data_access, create_model_card, query_lineage
+from ..tools.huggingface_data import (
+    acquire_huggingface_dataset,
+    get_dataset_acquisition,
+    inspect_huggingface_dataset,
+)
 from ..tools.imputation import llm_extrapolate_values
 from ..tools.local_tools import execute_python_tool, save_feature_manifest
 from ..tools.mlops import (
@@ -77,6 +89,11 @@ from ..tools.mlops import (
     run_clarify,
     run_sagemaker_pipeline,
     setup_model_monitor,
+)
+from ..tools.model_weight_tools import (
+    acquire_model_weights,
+    get_model_weight_acquisition,
+    list_model_weight_catalog,
 )
 from ..tools.monitor_neutral import (
     analyze_drift,
@@ -92,6 +109,7 @@ from ..tools.monitor_neutral import (
     retire_model,
     track_inference_spend,
 )
+from ..tools.qwen_sft import get_qwen_sft, reload_qwen_sft, submit_qwen_sft
 from ..tools.research.strands_tools import arxiv_only, research_fetch_urls, research_search, web_retrieve
 from ..tools.research_neutral import (
     apply_research_gate,
@@ -291,9 +309,25 @@ DATA_COLLECTION_AGENT = SubagentDeclaration(
         "preambles/thought_guidance",
         "subagents/data_collection_agent",
     ),
-    tools=(run_sql,),
+    tools=(
+        list_coding_case_catalog,
+        freeze_coding_cases,
+        get_coding_case_freeze,
+        list_model_weight_catalog,
+        acquire_model_weights,
+        get_model_weight_acquisition,
+        run_sql,
+        inspect_huggingface_dataset,
+        acquire_huggingface_dataset,
+        get_dataset_acquisition,
+        inspect_acquired_dataset,
+        get_dataset_inspection,
+        list_coding_preparation_profiles,
+        prepare_coding_dataset,
+        get_coding_preparation,
+    ),
     role="bounded",
-    description="Bounded Stage-4 data-collection agent: runs NL→SQL over the lake (QueryBackend) to inventory available + labeled data (CHEAP_READ); informs the labeling strategy — creates no labeling job.",
+    description="Bounded Stage-4 data-collection agent: inventories lake data and inspects/acquires pinned public Hub artifacts with lineage; creates no labeling or training job.",
 )
 
 DATA_INTEGRITY = SubagentDeclaration(
@@ -387,6 +421,9 @@ FINE_TUNE = SubagentDeclaration(
         "subagents/fine_tune",
     ),
     tools=(
+        submit_qwen_sft,
+        get_qwen_sft,
+        reload_qwen_sft,
         submit_sagemaker_job,
         fetch_training_metrics,
         await_training_job,
@@ -566,6 +603,7 @@ RESEARCH_DISCOVERY = SubagentDeclaration(
         "subagents/research_discovery",
     ),
     tools=(
+        list_coding_case_catalog,
         search_algorithms,
         recommend_approaches,
     ),
@@ -581,6 +619,7 @@ RESEARCH_SCOUT = SubagentDeclaration(
         "subagents/research_scout",
     ),
     tools=(
+        list_coding_case_catalog,
         index_research_corpus,
         chunk_documents,
         build_retrieval_index,
@@ -589,6 +628,7 @@ RESEARCH_SCOUT = SubagentDeclaration(
         tune_retrieval,
         scan_research,
         schedule_research_scan,
+        inspect_huggingface_dataset,
     ),
     role="bounded",
     description="Bounded Stage-0 research scout: indexes the research corpus + scans external/indexed sources (RetrievalBackend), returning ranked findings for the research_curator to triage.",
@@ -704,6 +744,12 @@ TRAINER_TUNER = SubagentDeclaration(
         "subagents/trainer_tuner",
     ),
     tools=(
+        submit_qwen_sft,
+        get_qwen_sft,
+        reload_qwen_sft,
+        list_model_weight_catalog,
+        acquire_model_weights,
+        get_model_weight_acquisition,
         dispatch_preflight,
         submit_tabular_training,
         fetch_training_metrics,

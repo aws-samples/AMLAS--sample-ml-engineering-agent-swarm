@@ -37,6 +37,14 @@ _REAL_MODULES = (
     "orchestration",  # M1 — LocalDriverBackend (replaces the OrchestrationBackend stub)
     "dataquality",  # M2 — InProcessDQ / DataBrew / GlueDataQuality (replaces the DQ stub)
     "etl",  # M2 — InProcessPandas / ProcessingJob / GlueETL (replaces the ETL stub)
+    "dataset_acquisition",  # Pinned source acquisition: Processing / explicit local
+    "coding_case_registration",  # Fixed data-only case freeze; no local fallback
+    "preparation_registration",  # Managed only; no local parser fallback
+    "model_registration",  # Fixed catalog-only managed model acquisition
+    "coding_generation_registration",
+    "coding_pair_registration",
+    "qwen_sft_registration",  # Fixed managed SFT/reload; no local fallback
+    "dataset_inspection",  # Fixed isolated inspection: managed only
     "tuning",  # M3 — OptunaBackend / SageMakerAMTBackend (replaces the Tuning stub)
     "automl",  # M3 — LocalSweepBackend / AutopilotV2Backend (replaces the AutoML stub)
     "deployment",  # M4 — LocalServeBackend / SageMakerDeploymentBackend (the priority GAP, ADR-007)

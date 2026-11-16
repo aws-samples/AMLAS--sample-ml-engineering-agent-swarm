@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import sys
+
 from ._runtime_guard import apply_openmp_safety_guard
 
 __version__ = "0.1.0"
@@ -56,4 +59,33 @@ def _load_dotenv() -> None:
         return
 
 
-_load_dotenv()
+def _expand_runtime_environment() -> None:
+    """Expand the deployment's environment pack before any reader runs.
+
+    The managed runtime refuses environments over 4,000 bytes, so a large
+    selection arrives as one checked pack (``_runtime_env_pack``). Expansion only
+    sets the restored keys and removes the two pack keys; a refusal raises before
+    anything changes and names no value. Without a pack this is a no-op.
+    """
+    from ._runtime_env_pack import PACK_KEY, expand_environ
+
+    try:
+        expanded = expand_environ(os.environ)
+    except ValueError as error:
+        raise RuntimeError(f"{PACK_KEY} refused: {error}") from None
+    if expanded is not None:
+        count, digest = expanded
+        sys.stderr.write(f"RUNTIME_ENV_PACK_EXPANDED keys={count} sha256={digest}\n")
+
+
+def _initialize_environment() -> None:
+    """Deployment values first (as shell values, they win), then the root ``.env`` layer."""
+    from ._runtime_env_pack import PACK_KEY, PACK_SHA256_KEY
+
+    _expand_runtime_environment()
+    _load_dotenv()
+    if PACK_KEY in os.environ or PACK_SHA256_KEY in os.environ:
+        raise RuntimeError(f"{PACK_KEY} refused: only the process environment may carry a pack")
+
+
+_initialize_environment()

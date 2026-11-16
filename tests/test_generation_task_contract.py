@@ -73,17 +73,24 @@ def test_existing_tabular_survey_still_defaults_to_tabular() -> None:
 @pytest.mark.parametrize(
     ("description", "task", "metric"),
     [
-        ("Fine-tune an open Qwen coding model on coding trajectories; measure held-out pass@1.",
-         "text_generation", "pass_at_1"),
-        ("Train a language model for text generation and evaluate perplexity.",
-         "text_generation", "perplexity"),
-        ("Fine-tune BERT to classify sentiment with F1 macro.",
-         "classification", "f1_macro"),
+        (
+            "Fine-tune an open Qwen coding model on coding trajectories; measure held-out pass@1.",
+            "text_generation",
+            "pass_at_1",
+        ),
+        (
+            "Train a language model for text generation and evaluate perplexity.",
+            "text_generation",
+            "perplexity",
+        ),
+        ("Fine-tune BERT to classify sentiment with F1 macro.", "classification", "f1_macro"),
         ("Forecast demand values with RMSE.", "regression", "rmse"),
     ],
 )
 def test_description_preserves_task_and_explicit_metric(
-    description: str, task: str, metric: str,
+    description: str,
+    task: str,
+    metric: str,
 ) -> None:
     assert _infer_task_type(description) == task
     assert _extract_metric(description) == metric
@@ -133,9 +140,15 @@ def test_generation_spec_roundtrip_preserves_real_metadata_and_unmeasured_baseli
 
 
 def test_generation_recommendation_never_falls_back_to_tabular_training() -> None:
-    result = raw(recommend_approaches)(json.dumps({
-        "task_type": "text_generation", "target": "messages", "primary_metric": "pass_at_1",
-    }))
+    result = raw(recommend_approaches)(
+        json.dumps(
+            {
+                "task_type": "text_generation",
+                "target": "messages",
+                "primary_metric": "pass_at_1",
+            }
+        )
+    )
     assert result.get("data_type") == "text", "generation must not assume tabular data"
     text = json.dumps(result).lower()
     for wrong in ("gradient boosting", "ensemble methods", "linear baseline", "imputation"):
@@ -167,7 +180,8 @@ def test_negated_classification_does_not_change_generation_objective() -> None:
 
 @pytest.mark.parametrize("alias", ["code_generation", "language_modeling", "text-generation"])
 def test_generation_alias_recommendation_uses_same_safe_contract(
-    monkeypatch: pytest.MonkeyPatch, alias: str,
+    monkeypatch: pytest.MonkeyPatch,
+    alias: str,
 ) -> None:
     from amlas.tools import research_tools
 
@@ -178,3 +192,46 @@ def test_generation_alias_recommendation_uses_same_safe_contract(
     result = raw(recommend_approaches)(json.dumps({"task_type": alias}))
     assert result.get("data_type") == "text"
     assert result["recommended_algorithms"] == []
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        "Fine-tune Qwen as a coding assistant; evaluate held-out pass@1.",
+        "Use SFT on Qwen for Python coding assistance; evaluate held-out pass@1.",
+    ],
+)
+def test_ordinary_qwen_coding_intent_stays_generation_without_a_score_default(description):
+    result = raw(generate_spec_from_description)(description)
+    assert result["task_type"] == "text_generation"
+    assert result["primary_metric"] == "pass_at_1"
+    assert result["success_threshold"] is None
+    assert result.get("planning_status") == "research_needed"
+    assert "acceptance" in result["needs_research"]
+    assert not result.get("spec_text")
+
+
+def test_missing_coding_planning_context_is_actionable_without_invented_fields():
+    result = raw(generate_spec_from_description)(
+        "Fine-tune Qwen/Qwen3.5-9B as a coding model; evaluate held-out pass@1."
+    )
+    assert result["task_type"] == "text_generation"
+    assert result["success_threshold"] is None
+    assert result.get("planning_status") == "research_needed"
+    assert {"target", "acceptance", "golden_dataset", "compute_budget"} <= set(result["needs_research"])
+    assert not result.get("spec_text")
+    assert result["native_admission"] is result["quality_success"] is False
+
+
+@pytest.mark.parametrize(
+    ("description", "task", "metric"),
+    [
+        ("Fine-tune Qwen to forecast demand with RMSE.", "regression", "rmse"),
+        ("Use Qwen as a coding assistant to classify sentiment with F1 macro.", "classification", "f1_macro"),
+    ],
+)
+def test_qwen_implementation_preserves_explicit_non_generation_objective(description, task, metric):
+    result = raw(generate_spec_from_description)(description)
+    assert result["task_type"] == task
+    assert result["primary_metric"] == metric
+    assert "spec_text" not in result

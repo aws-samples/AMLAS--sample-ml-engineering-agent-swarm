@@ -269,6 +269,10 @@ class BackendRegistry:
         local = next((e for e in table.values() if e.is_local), None)  # nosemgrep
         default = next((e for e in table.values() if e.is_default), None)  # nosemgrep
 
+        # Acquisition must remain off-box unless local/offline was explicitly
+        # selected. A small corpus or low budget is not download authorization.
+        if pname == "DataAcquisitionBackend" and not _running_offline():
+            return default, "auto → managed acquisition (explicit local/offline only)"
         prefer_local = _running_offline() or self._is_small(scale) or self._is_low_budget(budget)
 
         if prefer_local and local is not None:

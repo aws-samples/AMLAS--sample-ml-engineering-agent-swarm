@@ -51,6 +51,24 @@ Tags.of(app).add("amlas:deployment-prefix", deployment_prefix)
 deployment_id = os.environ.get("AMLAS_DEPLOYMENT_ID", "").strip()
 if deployment_id:
     Tags.of(app).add("amlas:deployment-id", deployment_id)
+# Normal wake is explicitly selected; route DATA still requires native qualification.
+normal_callback_switch = os.environ.get("AMLAS_NORMAL_CALLBACK_ENABLED", "").strip()
+if normal_callback_switch not in ("", "false", "true"):
+    raise ValueError("AMLAS_NORMAL_CALLBACK_ENABLED must be true or false")
+normal_callback_options = {}
+async_callback_options = {}
+if normal_callback_switch == "true":
+    normal_callback_options = {
+        "normal_callback_enabled": True,
+        "normal_callback_deployment_id": deployment_id,
+        "normal_callback_qualifier": os.environ.get("AGENTCORE_RUNTIME_QUALIFIER", "").strip(),
+        "normal_callback_runtime_version": os.environ.get("AGENTCORE_RUNTIME_VERSION", "").strip(),
+        "normal_callback_route_sha256": os.environ.get("AMLAS_CALLBACK_ROUTE_SHA256", "").strip(),
+    }
+    async_callback_options = dict(normal_callback_options)
+    async_callback_options["normal_callback_runtime_arn"] = os.environ.get(
+        "AGENTCORE_RUNTIME_ARN", ""
+    ).strip()
 # cdk-nag v3 runs as a native CDK policy-validation
 # plugin. Gated on AMLAS_CDK_NAG so normal deploys are unaffected; set
 # AMLAS_CDK_NAG=1 to run the security-review synth and emit its report.
@@ -172,7 +190,14 @@ RuntimeStack(
     kms_key_arn=kms_key_arn,
     runtime_network_mode=runtime_network_mode,
     capture_content=capture_content,
+    **normal_callback_options,
 )
-AsyncTrainingStack(app, "AsyncTrainingStack", kms_key_arn=kms_key_arn, **stack_options("AsyncTrainingStack"))
+AsyncTrainingStack(
+    app,
+    "AsyncTrainingStack",
+    kms_key_arn=kms_key_arn,
+    **stack_options("AsyncTrainingStack"),
+    **async_callback_options,
+)
 
 app.synth()

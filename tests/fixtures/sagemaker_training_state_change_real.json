@@ -1,0 +1,1027 @@
+{
+ "account": "111122223333",
+ "envelope_source": "https://docs.aws.amazon.com/sagemaker/latest/dg/automating-sagemaker-with-eventbridge.html#eventbridge-training",
+ "jobs": [
+  {
+   "detail": {
+    "AlgorithmSpecification": {
+     "ContainerArguments": [
+      "--operation",
+      "train",
+      "--recipe-id",
+      "full_v1",
+      "--recipe-version",
+      "1",
+      "--source-commit",
+      "ffffffffffffffffffffffffffffffffffffffff",
+      "--manifest-sha256",
+      "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "--manifest-byte-count",
+      "2884"
+     ],
+     "ContainerEntrypoint": [
+      "/usr/local/bin/amlas-processing-init",
+      "qwen-sft"
+     ],
+     "EnableSageMakerMetricsTimeSeries": false,
+     "TrainingImage": "111122223333.dkr.ecr.us-west-2.amazonaws.com/fixture-stage-image@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+     "TrainingInputMode": "File"
+    },
+    "BillableTimeInSeconds": 12858,
+    "CreationTime": 1794291942581,
+    "EnableInterContainerTrafficEncryption": false,
+    "EnableManagedSpotTraining": false,
+    "EnableNetworkIsolation": true,
+    "InputDataConfig": [
+     {
+      "ChannelName": "base_model",
+      "CompressionType": "None",
+      "DataSource": {
+       "S3DataSource": {
+        "S3DataDistributionType": "FullyReplicated",
+        "S3DataType": "S3Prefix",
+        "S3Uri": "s3://fixture-bucket/sessions/fixture-session/sft/fixture-deploy-sft-ex1-full-01/input/base_model/"
+       }
+      },
+      "InputMode": "File",
+      "RecordWrapperType": "None"
+     },
+     {
+      "ChannelName": "prepared",
+      "CompressionType": "None",
+      "DataSource": {
+       "S3DataSource": {
+        "S3DataDistributionType": "FullyReplicated",
+        "S3DataType": "S3Prefix",
+        "S3Uri": "s3://fixture-bucket/sessions/fixture-session/sft/fixture-deploy-sft-ex1-full-01/input/prepared/"
+       }
+      },
+      "InputMode": "File",
+      "RecordWrapperType": "None"
+     },
+     {
+      "ChannelName": "bindings",
+      "CompressionType": "None",
+      "DataSource": {
+       "S3DataSource": {
+        "S3DataDistributionType": "FullyReplicated",
+        "S3DataType": "S3Prefix",
+        "S3Uri": "s3://fixture-bucket/sessions/fixture-session/sft/fixture-deploy-sft-ex1-full-01/input/bindings/"
+       }
+      },
+      "InputMode": "File",
+      "RecordWrapperType": "None"
+     }
+    ],
+    "LastModifiedTime": 1794307020204,
+    "ModelArtifacts": {
+     "S3ModelArtifacts": "s3://fixture-bucket/sessions/fixture-session/sft/fixture-deploy-sft-ex1-full-01/output/fixture-deploy-sft-ex1-full-01/output/model"
+    },
+    "OutputDataConfig": {
+     "CompressionType": "NONE",
+     "KmsKeyId": "",
+     "S3OutputPath": "s3://fixture-bucket/sessions/fixture-session/sft/fixture-deploy-sft-ex1-full-01/output"
+    },
+    "ProfilingStatus": "Disabled",
+    "ResourceConfig": {
+     "InstanceCount": 1,
+     "VolumeSizeInGB": 100
+    },
+    "RoleArn": "arn:aws:iam::111122223333:role/fixture-sagemaker-role",
+    "SecondaryStatus": "Completed",
+    "SecondaryStatusTransitions": [
+     {
+      "EndTime": 1794291942729,
+      "StartTime": 1794291942581,
+      "Status": "Starting",
+      "StatusMessage": "Starting the training job"
+     },
+     {
+      "EndTime": 1794294161443,
+      "StartTime": 1794291942729,
+      "Status": "Pending",
+      "StatusMessage": "Preparing the instances for training"
+     },
+     {
+      "EndTime": 1794294297750,
+      "StartTime": 1794294161443,
+      "Status": "Downloading",
+      "StatusMessage": "Downloading the training image"
+     },
+     {
+      "EndTime": 1794307012258,
+      "StartTime": 1794294297750,
+      "Status": "Training",
+      "StatusMessage": "Training image download completed. Training in progress."
+     },
+     {
+      "EndTime": 1794307019616,
+      "StartTime": 1794307012258,
+      "Status": "Uploading",
+      "StatusMessage": "Uploading generated training model"
+     },
+     {
+      "EndTime": 1794307019616,
+      "StartTime": 1794307019616,
+      "Status": "Completed",
+      "StatusMessage": "Training job completed"
+     }
+    ],
+    "StoppingCondition": {
+     "MaxPendingTimeInSeconds": 432000,
+     "MaxRuntimeInSeconds": 86400
+    },
+    "Tags": {},
+    "TrainingEndTime": 1794307019616,
+    "TrainingJobArn": "arn:aws:sagemaker:us-west-2:111122223333:training-job/fixture-deploy-sft-ex1-full-01",
+    "TrainingJobName": "fixture-deploy-sft-ex1-full-01",
+    "TrainingJobStatus": "Completed",
+    "TrainingStartTime": 1794294161443,
+    "TrainingTimeInSeconds": 12858
+   },
+   "last_modified_ms": 1794307020204,
+   "name": "fixture-deploy-sft-ex1-full-01",
+   "observed_gaps_ms": [
+    6
+   ],
+   "observed_invocations": 2,
+   "status": "Completed"
+  },
+  {
+   "detail": {
+    "AlgorithmSpecification": {
+     "ContainerArguments": [
+      "--operation",
+      "train",
+      "--recipe-id",
+      "full_v1",
+      "--recipe-version",
+      "1",
+      "--source-commit",
+      "ffffffffffffffffffffffffffffffffffffffff",
+      "--manifest-sha256",
+      "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "--manifest-byte-count",
+      "2884"
+     ],
+     "ContainerEntrypoint": [
+      "/usr/local/bin/amlas-processing-init",
+      "qwen-sft"
+     ],
+     "EnableSageMakerMetricsTimeSeries": false,
+     "TrainingImage": "111122223333.dkr.ecr.us-west-2.amazonaws.com/fixture-stage-image@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+     "TrainingInputMode": "File"
+    },
+    "BillableTimeInSeconds": 12715,
+    "CreationTime": 1792182302129,
+    "EnableInterContainerTrafficEncryption": false,
+    "EnableManagedSpotTraining": false,
+    "EnableNetworkIsolation": true,
+    "InputDataConfig": [
+     {
+      "ChannelName": "base_model",
+      "CompressionType": "None",
+      "DataSource": {
+       "S3DataSource": {
+        "S3DataDistributionType": "FullyReplicated",
+        "S3DataType": "S3Prefix",
+        "S3Uri": "s3://fixture-bucket/sessions/fixture-session/sft/fixture-deploy-sft-c3c3c3c3c3c3/input/base_model/"
+       }
+      },
+      "InputMode": "File",
+      "RecordWrapperType": "None"
+     },
+     {
+      "ChannelName": "prepared",
+      "CompressionType": "None",
+      "DataSource": {
+       "S3DataSource": {
+        "S3DataDistributionType": "FullyReplicated",
+        "S3DataType": "S3Prefix",
+        "S3Uri": "s3://fixture-bucket/sessions/fixture-session/sft/fixture-deploy-sft-c3c3c3c3c3c3/input/prepared/"
+       }
+      },
+      "InputMode": "File",
+      "RecordWrapperType": "None"
+     },
+     {
+      "ChannelName": "bindings",
+      "CompressionType": "None",
+      "DataSource": {
+       "S3DataSource": {
+        "S3DataDistributionType": "FullyReplicated",
+        "S3DataType": "S3Prefix",
+        "S3Uri": "s3://fixture-bucket/sessions/fixture-session/sft/fixture-deploy-sft-full-a7a7a7a-01/input/bindings/"
+       }
+      },
+      "InputMode": "File",
+      "RecordWrapperType": "None"
+     }
+    ],
+    "LastModifiedTime": 1792195091615,
+    "ModelArtifacts": {
+     "S3ModelArtifacts": "s3://fixture-bucket/sessions/fixture-session/sft/fixture-deploy-sft-full-a7a7a7a-01/output/fixture-deploy-sft-full-a7a7a7a-01/output/model"
+    },
+    "OutputDataConfig": {
+     "CompressionType": "NONE",
+     "KmsKeyId": "",
+     "S3OutputPath": "s3://fixture-bucket/sessions/fixture-session/sft/fixture-deploy-sft-full-a7a7a7a-01/output"
+    },
+    "ProfilingStatus": "Disabled",
+    "ResourceConfig": {
+     "InstanceCount": 1,
+     "InstanceType": "ml.g6e.12xlarge",
+     "VolumeSizeInGB": 100
+    },
+    "RoleArn": "arn:aws:iam::111122223333:role/fixture-sagemaker-role",
+    "SecondaryStatus": "Completed",
+    "SecondaryStatusTransitions": [
+     {
+      "EndTime": 1792182302480,
+      "StartTime": 1792182302129,
+      "Status": "Starting",
+      "StatusMessage": "Starting the training job"
+     },
+     {
+      "EndTime": 1792182376902,
+      "StartTime": 1792182302480,
+      "Status": "Pending",
+      "StatusMessage": "Preparing the instances for training"
+     },
+     {
+      "EndTime": 1792182442752,
+      "StartTime": 1792182376902,
+      "Status": "Downloading",
+      "StatusMessage": "Downloading the training image"
+     },
+     {
+      "EndTime": 1792195083696,
+      "StartTime": 1792182442752,
+      "Status": "Training",
+      "StatusMessage": "Training image download completed. Training in progress."
+     },
+     {
+      "EndTime": 1792195091133,
+      "StartTime": 1792195083696,
+      "Status": "Uploading",
+      "StatusMessage": "Uploading generated training model"
+     },
+     {
+      "EndTime": 1792195091133,
+      "StartTime": 1792195091133,
+      "Status": "Completed",
+      "StatusMessage": "Training job completed"
+     }
+    ],
+    "StoppingCondition": {
+     "MaxRuntimeInSeconds": 86400
+    },
+    "Tags": {},
+    "TrainingEndTime": 1792195091133,
+    "TrainingJobArn": "arn:aws:sagemaker:us-west-2:111122223333:training-job/fixture-deploy-sft-full-a7a7a7a-01",
+    "TrainingJobName": "fixture-deploy-sft-full-a7a7a7a-01",
+    "TrainingJobStatus": "Completed",
+    "TrainingStartTime": 1792182376902,
+    "TrainingTimeInSeconds": 12715
+   },
+   "last_modified_ms": 1792195091615,
+   "name": "fixture-deploy-sft-full-a7a7a7a-01",
+   "observed_gaps_ms": [
+    708
+   ],
+   "observed_invocations": 2,
+   "status": "Completed"
+  },
+  {
+   "detail": {
+    "AlgorithmSpecification": {
+     "ContainerArguments": [
+      "--operation",
+      "generate",
+      "--recipe-id",
+      "humaneval_greedy_v1",
+      "--recipe-version",
+      "1",
+      "--source-commit",
+      "ffffffffffffffffffffffffffffffffffffffff",
+      "--manifest-sha256",
+      "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "--manifest-byte-count",
+      "2497"
+     ],
+     "ContainerEntrypoint": [
+      "/usr/local/bin/amlas-processing-init",
+      "qwen-sft"
+     ],
+     "EnableSageMakerMetricsTimeSeries": false,
+     "TrainingImage": "111122223333.dkr.ecr.us-west-2.amazonaws.com/fixture-stage-image@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+     "TrainingInputMode": "File"
+    },
+    "BillableTimeInSeconds": 1463,
+    "CreationTime": 1794293948624,
+    "EnableInterContainerTrafficEncryption": false,
+    "EnableManagedSpotTraining": false,
+    "EnableNetworkIsolation": true,
+    "InputDataConfig": [
+     {
+      "ChannelName": "base_model",
+      "CompressionType": "None",
+      "DataSource": {
+       "S3DataSource": {
+        "S3DataDistributionType": "FullyReplicated",
+        "S3DataType": "S3Prefix",
+        "S3Uri": "s3://fixture-bucket/sessions/fixture-session/generation/fixture-deploy-gen-e5e5e5e5e5e5e5e5/input/base_model/"
+       }
+      },
+      "InputMode": "File",
+      "RecordWrapperType": "None"
+     },
+     {
+      "ChannelName": "prompts",
+      "CompressionType": "None",
+      "DataSource": {
+       "S3DataSource": {
+        "S3DataDistributionType": "FullyReplicated",
+        "S3DataType": "S3Prefix",
+        "S3Uri": "s3://fixture-bucket/sessions/fixture-session/generation/fixture-deploy-gen-e5e5e5e5e5e5e5e5/input/prompts/"
+       }
+      },
+      "InputMode": "File",
+      "RecordWrapperType": "None"
+     },
+     {
+      "ChannelName": "bindings",
+      "CompressionType": "None",
+      "DataSource": {
+       "S3DataSource": {
+        "S3DataDistributionType": "FullyReplicated",
+        "S3DataType": "S3Prefix",
+        "S3Uri": "s3://fixture-bucket/sessions/fixture-session/generation/fixture-deploy-gen-e5e5e5e5e5e5e5e5/input/bindings/"
+       }
+      },
+      "InputMode": "File",
+      "RecordWrapperType": "None"
+     }
+    ],
+    "LastModifiedTime": 1794300120131,
+    "ModelArtifacts": {
+     "S3ModelArtifacts": "s3://fixture-bucket/sessions/fixture-session/generation/fixture-deploy-gen-e5e5e5e5e5e5e5e5/output/fixture-deploy-gen-e5e5e5e5e5e5e5e5/output/model"
+    },
+    "OutputDataConfig": {
+     "CompressionType": "NONE",
+     "KmsKeyId": "",
+     "S3OutputPath": "s3://fixture-bucket/sessions/fixture-session/generation/fixture-deploy-gen-e5e5e5e5e5e5e5e5/output"
+    },
+    "ProfilingStatus": "Disabled",
+    "ResourceConfig": {
+     "InstanceCount": 1,
+     "InstanceType": "ml.g6e.4xlarge",
+     "VolumeSizeInGB": 100
+    },
+    "RoleArn": "arn:aws:iam::111122223333:role/fixture-sagemaker-role",
+    "SecondaryStatus": "Completed",
+    "SecondaryStatusTransitions": [
+     {
+      "EndTime": 1794293948832,
+      "StartTime": 1794293948624,
+      "Status": "Starting",
+      "StatusMessage": "Starting the training job"
+     },
+     {
+      "EndTime": 1794298656927,
+      "StartTime": 1794293948832,
+      "Status": "Pending",
+      "StatusMessage": "Preparing the instances for training"
+     },
+     {
+      "EndTime": 1794298788003,
+      "StartTime": 1794298656927,
+      "Status": "Downloading",
+      "StatusMessage": "Downloading the training image"
+     },
+     {
+      "EndTime": 1794300112234,
+      "StartTime": 1794298788003,
+      "Status": "Training",
+      "StatusMessage": "Training image download completed. Training in progress."
+     },
+     {
+      "EndTime": 1794300119601,
+      "StartTime": 1794300112234,
+      "Status": "Uploading",
+      "StatusMessage": "Uploading generated training model"
+     },
+     {
+      "EndTime": 1794300119601,
+      "StartTime": 1794300119601,
+      "Status": "Completed",
+      "StatusMessage": "Training job completed"
+     }
+    ],
+    "StoppingCondition": {
+     "MaxRuntimeInSeconds": 14400
+    },
+    "Tags": {},
+    "TrainingEndTime": 1794300119601,
+    "TrainingJobArn": "arn:aws:sagemaker:us-west-2:111122223333:training-job/fixture-deploy-gen-e5e5e5e5e5e5e5e5",
+    "TrainingJobName": "fixture-deploy-gen-e5e5e5e5e5e5e5e5",
+    "TrainingJobStatus": "Completed",
+    "TrainingStartTime": 1794298656927,
+    "TrainingTimeInSeconds": 1463
+   },
+   "last_modified_ms": 1794300120131,
+   "name": "fixture-deploy-gen-e5e5e5e5e5e5e5e5",
+   "observed_gaps_ms": [
+    284
+   ],
+   "observed_invocations": 2,
+   "status": "Completed"
+  },
+  {
+   "detail": {
+    "AlgorithmSpecification": {
+     "ContainerArguments": [
+      "--operation",
+      "train",
+      "--recipe-id",
+      "fit_v1",
+      "--recipe-version",
+      "1",
+      "--source-commit",
+      "ffffffffffffffffffffffffffffffffffffffff",
+      "--manifest-sha256",
+      "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "--manifest-byte-count",
+      "2883"
+     ],
+     "ContainerEntrypoint": [
+      "/usr/local/bin/amlas-processing-init",
+      "qwen-sft"
+     ],
+     "EnableSageMakerMetricsTimeSeries": false,
+     "TrainingImage": "111122223333.dkr.ecr.us-west-2.amazonaws.com/fixture-stage-image@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+     "TrainingInputMode": "File"
+    },
+    "BillableTimeInSeconds": 134,
+    "CreationTime": 1792156358192,
+    "EnableInterContainerTrafficEncryption": false,
+    "EnableManagedSpotTraining": false,
+    "EnableNetworkIsolation": true,
+    "FailureReason": "AlgorithmError: fixture failure reason, exit code 1\nTraceback (fixture line)",
+    "InputDataConfig": [
+     {
+      "ChannelName": "base_model",
+      "CompressionType": "None",
+      "DataSource": {
+       "S3DataSource": {
+        "S3DataDistributionType": "FullyReplicated",
+        "S3DataType": "S3Prefix",
+        "S3Uri": "s3://fixture-bucket/sessions/fixture-session/sft/fixture-deploy-sft-c3c3c3c3c3c3/input/base_model/"
+       }
+      },
+      "InputMode": "File",
+      "RecordWrapperType": "None"
+     },
+     {
+      "ChannelName": "prepared",
+      "CompressionType": "None",
+      "DataSource": {
+       "S3DataSource": {
+        "S3DataDistributionType": "FullyReplicated",
+        "S3DataType": "S3Prefix",
+        "S3Uri": "s3://fixture-bucket/sessions/fixture-session/sft/fixture-deploy-sft-c3c3c3c3c3c3/input/prepared/"
+       }
+      },
+      "InputMode": "File",
+      "RecordWrapperType": "None"
+     },
+     {
+      "ChannelName": "bindings",
+      "CompressionType": "None",
+      "DataSource": {
+       "S3DataSource": {
+        "S3DataDistributionType": "FullyReplicated",
+        "S3DataType": "S3Prefix",
+        "S3Uri": "s3://fixture-bucket/sessions/fixture-session/sft/fixture-deploy-sft-c3c3c3c3c3c3/input/bindings/"
+       }
+      },
+      "InputMode": "File",
+      "RecordWrapperType": "None"
+     }
+    ],
+    "LastModifiedTime": 1792156780992,
+    "ModelArtifacts": {
+     "S3ModelArtifacts": "s3://fixture-bucket/sessions/fixture-session/sft/fixture-deploy-sft-c3c3c3c3c3c3/output/fixture-deploy-sft-c3c3c3c3c3c3/output/model"
+    },
+    "OutputDataConfig": {
+     "CompressionType": "NONE",
+     "KmsKeyId": "",
+     "S3OutputPath": "s3://fixture-bucket/sessions/fixture-session/sft/fixture-deploy-sft-c3c3c3c3c3c3/output"
+    },
+    "ProfilingStatus": "Disabled",
+    "ResourceConfig": {
+     "InstanceCount": 1,
+     "InstanceType": "ml.g6e.12xlarge",
+     "VolumeSizeInGB": 100
+    },
+    "RoleArn": "arn:aws:iam::111122223333:role/fixture-sagemaker-role",
+    "SecondaryStatus": "Failed",
+    "SecondaryStatusTransitions": [
+     {
+      "EndTime": 1792156358523,
+      "StartTime": 1792156358192,
+      "Status": "Starting",
+      "StatusMessage": "Starting the training job"
+     },
+     {
+      "EndTime": 1792156646763,
+      "StartTime": 1792156358523,
+      "Status": "Pending",
+      "StatusMessage": "Preparing the instances for training"
+     },
+     {
+      "EndTime": 1792156717602,
+      "StartTime": 1792156646763,
+      "Status": "Downloading",
+      "StatusMessage": "Downloading the training image"
+     },
+     {
+      "EndTime": 1792156773469,
+      "StartTime": 1792156717602,
+      "Status": "Training",
+      "StatusMessage": "Training image download completed. Training in progress."
+     },
+     {
+      "EndTime": 1792156780831,
+      "StartTime": 1792156773469,
+      "Status": "Uploading",
+      "StatusMessage": "Uploading generated training model"
+     },
+     {
+      "EndTime": 1792156780831,
+      "StartTime": 1792156780831,
+      "Status": "Failed",
+      "StatusMessage": "Training job failed"
+     }
+    ],
+    "StoppingCondition": {
+     "MaxRuntimeInSeconds": 3600
+    },
+    "Tags": {},
+    "TrainingEndTime": 1792156780831,
+    "TrainingJobArn": "arn:aws:sagemaker:us-west-2:111122223333:training-job/fixture-deploy-sft-c3c3c3c3c3c3",
+    "TrainingJobName": "fixture-deploy-sft-c3c3c3c3c3c3",
+    "TrainingJobStatus": "Failed",
+    "TrainingStartTime": 1792156646763,
+    "TrainingTimeInSeconds": 134
+   },
+   "last_modified_ms": 1792156780992,
+   "name": "fixture-deploy-sft-c3c3c3c3c3c3",
+   "observed_gaps_ms": [
+    111
+   ],
+   "observed_invocations": 2,
+   "status": "Failed"
+  },
+  {
+   "detail": {
+    "AlgorithmSpecification": {
+     "ContainerArguments": [
+      "--operation",
+      "reload",
+      "--recipe-id",
+      "full_v1",
+      "--recipe-version",
+      "1",
+      "--source-commit",
+      "ffffffffffffffffffffffffffffffffffffffff",
+      "--manifest-sha256",
+      "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "--manifest-byte-count",
+      "1872"
+     ],
+     "ContainerEntrypoint": [
+      "/usr/local/bin/amlas-processing-init",
+      "qwen-sft"
+     ],
+     "EnableSageMakerMetricsTimeSeries": false,
+     "TrainingImage": "111122223333.dkr.ecr.us-west-2.amazonaws.com/fixture-stage-image@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+     "TrainingInputMode": "File"
+    },
+    "BillableTimeInSeconds": 195,
+    "CreationTime": 1792197095992,
+    "EnableInterContainerTrafficEncryption": false,
+    "EnableManagedSpotTraining": false,
+    "EnableNetworkIsolation": true,
+    "FailureReason": "AlgorithmError: fixture failure reason, exit code 1\nTraceback (fixture line)",
+    "InputDataConfig": [
+     {
+      "ChannelName": "base_model",
+      "CompressionType": "None",
+      "DataSource": {
+       "S3DataSource": {
+        "S3DataDistributionType": "FullyReplicated",
+        "S3DataType": "S3Prefix",
+        "S3Uri": "s3://fixture-bucket/sessions/fixture-session/sft/fixture-deploy-sft-c3c3c3c3c3c3/input/base_model/"
+       }
+      },
+      "InputMode": "File",
+      "RecordWrapperType": "None"
+     },
+     {
+      "ChannelName": "adapter",
+      "CompressionType": "None",
+      "DataSource": {
+       "S3DataSource": {
+        "S3DataDistributionType": "FullyReplicated",
+        "S3DataType": "S3Prefix",
+        "S3Uri": "s3://fixture-bucket/sessions/fixture-session/reload/fixture-deploy-reload-full-a7a7a7a-01/input/adapter/"
+       }
+      },
+      "InputMode": "File",
+      "RecordWrapperType": "None"
+     },
+     {
+      "ChannelName": "bindings",
+      "CompressionType": "None",
+      "DataSource": {
+       "S3DataSource": {
+        "S3DataDistributionType": "FullyReplicated",
+        "S3DataType": "S3Prefix",
+        "S3Uri": "s3://fixture-bucket/sessions/fixture-session/reload/fixture-deploy-reload-full-a7a7a7a-01/input/bindings/"
+       }
+      },
+      "InputMode": "File",
+      "RecordWrapperType": "None"
+     }
+    ],
+    "LastModifiedTime": 1792226130773,
+    "ModelArtifacts": {
+     "S3ModelArtifacts": "s3://fixture-bucket/sessions/fixture-session/reload/fixture-deploy-reload-full-a7a7a7a-01/output/fixture-deploy-reload-full-a7a7a7a-01/output/model"
+    },
+    "OutputDataConfig": {
+     "CompressionType": "NONE",
+     "KmsKeyId": "",
+     "S3OutputPath": "s3://fixture-bucket/sessions/fixture-session/reload/fixture-deploy-reload-full-a7a7a7a-01/output"
+    },
+    "ProfilingStatus": "Disabled",
+    "ResourceConfig": {
+     "InstanceCount": 1,
+     "InstanceType": "ml.g6e.12xlarge",
+     "VolumeSizeInGB": 100
+    },
+    "RoleArn": "arn:aws:iam::111122223333:role/fixture-sagemaker-role",
+    "SecondaryStatus": "Failed",
+    "SecondaryStatusTransitions": [
+     {
+      "EndTime": 1792197096341,
+      "StartTime": 1792197095992,
+      "Status": "Starting",
+      "StatusMessage": "Starting the training job"
+     },
+     {
+      "EndTime": 1792225935494,
+      "StartTime": 1792197096341,
+      "Status": "Pending",
+      "StatusMessage": "Preparing the instances for training"
+     },
+     {
+      "EndTime": 1792226006359,
+      "StartTime": 1792225935494,
+      "Status": "Downloading",
+      "StatusMessage": "Downloading the training image"
+     },
+     {
+      "EndTime": 1792226122785,
+      "StartTime": 1792226006359,
+      "Status": "Training",
+      "StatusMessage": "Training image download completed. Training in progress."
+     },
+     {
+      "EndTime": 1792226130166,
+      "StartTime": 1792226122785,
+      "Status": "Uploading",
+      "StatusMessage": "Uploading generated training model"
+     },
+     {
+      "EndTime": 1792226130166,
+      "StartTime": 1792226130166,
+      "Status": "Failed",
+      "StatusMessage": "Training job failed"
+     }
+    ],
+    "StoppingCondition": {
+     "MaxRuntimeInSeconds": 14400
+    },
+    "Tags": {},
+    "TrainingEndTime": 1792226130166,
+    "TrainingJobArn": "arn:aws:sagemaker:us-west-2:111122223333:training-job/fixture-deploy-reload-full-a7a7a7a-01",
+    "TrainingJobName": "fixture-deploy-reload-full-a7a7a7a-01",
+    "TrainingJobStatus": "Failed",
+    "TrainingStartTime": 1792225935494,
+    "TrainingTimeInSeconds": 195
+   },
+   "last_modified_ms": 1792226130773,
+   "name": "fixture-deploy-reload-full-a7a7a7a-01",
+   "observed_gaps_ms": [
+    861
+   ],
+   "observed_invocations": 2,
+   "status": "Failed"
+  },
+  {
+   "detail": {
+    "AlgorithmSpecification": {
+     "ContainerArguments": [
+      "--operation",
+      "train",
+      "--recipe-id",
+      "full_v1",
+      "--recipe-version",
+      "1",
+      "--source-commit",
+      "ffffffffffffffffffffffffffffffffffffffff",
+      "--manifest-sha256",
+      "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "--manifest-byte-count",
+      "2879"
+     ],
+     "ContainerEntrypoint": [
+      "/usr/local/bin/amlas-processing-init",
+      "qwen-sft"
+     ],
+     "EnableSageMakerMetricsTimeSeries": false,
+     "TrainingImage": "111122223333.dkr.ecr.us-west-2.amazonaws.com/fixture-stage-image@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+     "TrainingInputMode": "File"
+    },
+    "CreationTime": 1792508276145,
+    "EnableInterContainerTrafficEncryption": false,
+    "EnableManagedSpotTraining": false,
+    "EnableNetworkIsolation": true,
+    "InputDataConfig": [
+     {
+      "ChannelName": "base_model",
+      "CompressionType": "None",
+      "DataSource": {
+       "S3DataSource": {
+        "S3DataDistributionType": "FullyReplicated",
+        "S3DataType": "S3Prefix",
+        "S3Uri": "s3://fixture-bucket/sessions/fixture-session/sft/fixture-deploy-sft-d4d4d4d4d4d4/input/base_model/"
+       }
+      },
+      "InputMode": "File",
+      "RecordWrapperType": "None"
+     },
+     {
+      "ChannelName": "prepared",
+      "CompressionType": "None",
+      "DataSource": {
+       "S3DataSource": {
+        "S3DataDistributionType": "FullyReplicated",
+        "S3DataType": "S3Prefix",
+        "S3Uri": "s3://fixture-bucket/sessions/fixture-session/sft/fixture-deploy-sft-d4d4d4d4d4d4/input/prepared/"
+       }
+      },
+      "InputMode": "File",
+      "RecordWrapperType": "None"
+     },
+     {
+      "ChannelName": "bindings",
+      "CompressionType": "None",
+      "DataSource": {
+       "S3DataSource": {
+        "S3DataDistributionType": "FullyReplicated",
+        "S3DataType": "S3Prefix",
+        "S3Uri": "s3://fixture-bucket/sessions/fixture-session/sft/fixture-deploy-sft-d4d4d4d4d4d4/input/bindings/"
+       }
+      },
+      "InputMode": "File",
+      "RecordWrapperType": "None"
+     }
+    ],
+    "LastModifiedTime": 1792515228829,
+    "OutputDataConfig": {
+     "CompressionType": "NONE",
+     "KmsKeyId": "",
+     "S3OutputPath": "s3://fixture-bucket/sessions/fixture-session/sft/fixture-deploy-sft-d4d4d4d4d4d4/output"
+    },
+    "ProfilingStatus": "Disabled",
+    "ResourceConfig": {
+     "InstanceCount": 1,
+     "InstanceType": "ml.g6e.12xlarge",
+     "VolumeSizeInGB": 100
+    },
+    "RoleArn": "arn:aws:iam::111122223333:role/fixture-sagemaker-role",
+    "SecondaryStatus": "Stopped",
+    "SecondaryStatusTransitions": [
+     {
+      "EndTime": 1792508276464,
+      "StartTime": 1792508276145,
+      "Status": "Starting",
+      "StatusMessage": "Starting the training job"
+     },
+     {
+      "EndTime": 1792515228829,
+      "StartTime": 1792508276464,
+      "Status": "Pending",
+      "StatusMessage": "Training job stopped"
+     },
+     {
+      "EndTime": 1792515228829,
+      "StartTime": 1792515228829,
+      "Status": "Stopped",
+      "StatusMessage": "Training job stopped"
+     }
+    ],
+    "StoppingCondition": {
+     "MaxRuntimeInSeconds": 86400
+    },
+    "Tags": {},
+    "TrainingEndTime": 1792515228829,
+    "TrainingJobArn": "arn:aws:sagemaker:us-west-2:111122223333:training-job/fixture-deploy-sft-d4d4d4d4d4d4",
+    "TrainingJobName": "fixture-deploy-sft-d4d4d4d4d4d4",
+    "TrainingJobStatus": "Stopped"
+   },
+   "last_modified_ms": 1792515228829,
+   "name": "fixture-deploy-sft-d4d4d4d4d4d4",
+   "observed_gaps_ms": [],
+   "observed_invocations": 1,
+   "status": "Stopped"
+  },
+  {
+   "detail": {
+    "AlgorithmSpecification": {
+     "ContainerArguments": [
+      "--operation",
+      "train",
+      "--recipe-id",
+      "fit_v1",
+      "--recipe-version",
+      "1",
+      "--source-commit",
+      "ffffffffffffffffffffffffffffffffffffffff",
+      "--manifest-sha256",
+      "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "--manifest-byte-count",
+      "2883"
+     ],
+     "ContainerEntrypoint": [
+      "/usr/local/bin/amlas-processing-init",
+      "qwen-sft"
+     ],
+     "EnableSageMakerMetricsTimeSeries": false,
+     "TrainingImage": "111122223333.dkr.ecr.us-west-2.amazonaws.com/fixture-stage-image@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+     "TrainingInputMode": "File"
+    },
+    "CreationTime": 1794283655158,
+    "EnableInterContainerTrafficEncryption": false,
+    "EnableManagedSpotTraining": false,
+    "EnableNetworkIsolation": true,
+    "InputDataConfig": [
+     {
+      "ChannelName": "base_model",
+      "CompressionType": "None",
+      "DataSource": {
+       "S3DataSource": {
+        "S3DataDistributionType": "FullyReplicated",
+        "S3DataType": "S3Prefix",
+        "S3Uri": "s3://fixture-bucket/sessions/fixture-session/sft/ex1-sft-fit-05/input/base_model/"
+       }
+      },
+      "InputMode": "File",
+      "RecordWrapperType": "None"
+     },
+     {
+      "ChannelName": "prepared",
+      "CompressionType": "None",
+      "DataSource": {
+       "S3DataSource": {
+        "S3DataDistributionType": "FullyReplicated",
+        "S3DataType": "S3Prefix",
+        "S3Uri": "s3://fixture-bucket/sessions/fixture-session/sft/ex1-sft-fit-05/input/prepared/"
+       }
+      },
+      "InputMode": "File",
+      "RecordWrapperType": "None"
+     },
+     {
+      "ChannelName": "bindings",
+      "CompressionType": "None",
+      "DataSource": {
+       "S3DataSource": {
+        "S3DataDistributionType": "FullyReplicated",
+        "S3DataType": "S3Prefix",
+        "S3Uri": "s3://fixture-bucket/sessions/fixture-session/sft/ex1-sft-fit-05/input/bindings/"
+       }
+      },
+      "InputMode": "File",
+      "RecordWrapperType": "None"
+     }
+    ],
+    "LastModifiedTime": 1794286916630,
+    "OutputDataConfig": {
+     "CompressionType": "NONE",
+     "KmsKeyId": "",
+     "S3OutputPath": "s3://fixture-bucket/sessions/fixture-session/sft/ex1-sft-fit-16x-05/output"
+    },
+    "ProfilingStatus": "Disabled",
+    "ResourceConfig": {
+     "InstanceCount": 1,
+     "InstanceType": "ml.g6e.12xlarge",
+     "VolumeSizeInGB": 100
+    },
+    "RoleArn": "arn:aws:iam::111122223333:role/fixture-sagemaker-role",
+    "SecondaryStatus": "Stopped",
+    "SecondaryStatusTransitions": [
+     {
+      "EndTime": 1794283655398,
+      "StartTime": 1794283655158,
+      "Status": "Starting",
+      "StatusMessage": "Starting the training job"
+     },
+     {
+      "EndTime": 1794286916630,
+      "StartTime": 1794283655398,
+      "Status": "Pending",
+      "StatusMessage": "Training job stopped"
+     },
+     {
+      "EndTime": 1794286916630,
+      "StartTime": 1794286916630,
+      "Status": "Stopped",
+      "StatusMessage": "Training job stopped"
+     }
+    ],
+    "StoppingCondition": {
+     "MaxRuntimeInSeconds": 3600
+    },
+    "Tags": {},
+    "TrainingEndTime": 1794286916630,
+    "TrainingJobArn": "arn:aws:sagemaker:us-west-2:111122223333:training-job/ex1-sft-fit-16x-05",
+    "TrainingJobName": "ex1-sft-fit-16x-05",
+    "TrainingJobStatus": "Stopped"
+   },
+   "last_modified_ms": 1794286916630,
+   "name": "ex1-sft-fit-16x-05",
+   "observed_gaps_ms": [],
+   "observed_invocations": 1,
+   "status": "Stopped"
+  }
+ ],
+ "measured_delivery": {
+  "campaign_lookup_path_durations_ms": [
+   1399.51,
+   1671.86,
+   1694.13,
+   1696.28,
+   1748.32,
+   1751.4,
+   1754.87,
+   1759.82,
+   1778.81,
+   1781.54,
+   1783.65,
+   1786.84,
+   1817.56,
+   1825.54,
+   1833.34,
+   1834.79,
+   1848.24,
+   1848.63,
+   1876.65
+  ],
+  "cloudtrail_reads_for_one_pair": {
+   "GetAgentRuntime": 10,
+   "GetAgentRuntimeEndpoint": 20,
+   "job": "fixture-deploy-sft-ex1-full-01"
+  },
+  "completed_or_failed_jobs": 20,
+  "completed_or_failed_pair_gaps_ms": [
+   6,
+   12,
+   24,
+   26,
+   87,
+   94,
+   111,
+   272,
+   284,
+   392,
+   430,
+   451,
+   490,
+   491,
+   592,
+   708,
+   731,
+   832,
+   861,
+   878
+  ],
+  "description": "Invocations of the EventBridge target ($LATEST) per real job end, from the function's REPORT lines: each Completed or Failed job produced two invocations, each Stopped job one.",
+  "lookup_path_description": "Durations of the EventBridge-target invocations since the target runs the campaign handler (job ends from 2026-11-10): real events with no wake row, answered binding_missing.",
+  "stopped_jobs_with_one_invocation": 2
+ },
+ "provenance": "Derived 2026-11-10 from read-only DescribeTrainingJob records of real training jobs (October 2026 and a GPU test run of 2026-11-10) placed in the documented EventBridge envelope. Real: the record shapes and field sets, the statuses and their transitions, the instance types, the record times, durations and byte counts, and the measured delivery numbers. Made up: every job name, the account number, the bucket, session, role and image names, every digest and commit value, and the free text.",
+ "region": "us-west-2"
+}

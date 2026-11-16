@@ -61,7 +61,7 @@
 # pushes the arm64 runtime image to the `amlas-runtime` ECR repo, create-or-discovers
 # the managed AgentCore runtime (scripts/lib/deploy_agentcore_runtime.sh), polls it to READY, and
 # publishes its ARN to SSM (/amlas/agentcore-runtime-arn) so the TUI/CLI resolve it.
-# This phase REQUIRES Docker + buildx; disable it with --skip-agent-runtime.
+# This phase REQUIRES verified selected-account Linux EC2 with local Docker + buildx; disable it with --skip-agent-runtime.
 #
 # Bash 3.2 compatible (macOS system bash). Requires: bash, aws, cdk, uv, node.
 # =============================================================================
@@ -74,6 +74,7 @@ SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")" && pwd)"
 . "$SCRIPT_DIR/lib/deploy_common.sh"
 # Definitions only; host changes run after the authenticated account gate.
 . "$SCRIPT_DIR/lib/prepare_host.sh"
+. "$SCRIPT_DIR/lib/require_account_build_host.sh"
 REPO_ROOT="$(resolve_repo_root "$SCRIPT_SOURCE")"
 cd "$REPO_ROOT"
 
@@ -221,6 +222,31 @@ case "$AMLAS_AWS_ACCOUNT_ID" in ""|*[!0-9]*) die "A 12-digit target AWS account 
 [ "${#AMLAS_AWS_ACCOUNT_ID}" -eq 12 ] || die "The target AWS account id must contain 12 digits."
 export_aws_env "${AWS_PROFILE:-}" "$AMLAS_AWS_ACCOUNT_ID" "$AWS_REGION"
 account_safety_gate "$AMLAS_AWS_ACCOUNT_ID"
+validate_acquisition_release_config "$AMLAS_AWS_ACCOUNT_ID" "$AWS_REGION" \
+  "${AMLAS_DATA_ACQUISITION_IMAGE_URI:-}" "${AMLAS_DATA_ACQUISITION_SOURCE_COMMIT:-}" \
+  || die "Invalid acquisition release configuration; no setup resources were changed."
+validate_inspection_release_config "$AMLAS_AWS_ACCOUNT_ID" "$AWS_REGION" \
+  "${AMLAS_DATA_INSPECTION_IMAGE_URI:-}" "${AMLAS_DATA_INSPECTION_SOURCE_COMMIT:-}" \
+  "${AMLAS_DATA_INSPECTION_ADMISSION_DIGEST:-}" \
+  || die "Invalid inspection release configuration; no setup resources were changed."
+if [ "$SKIP_AGENT_RUNTIME" = "0" ] && [ "$PREFLIGHT_ONLY" = "0" ]; then
+  validate_inspection_publication_config "$AMLAS_AWS_ACCOUNT_ID" "$AWS_REGION" \
+    "${AMLAS_DATA_INSPECTION_IMAGE_URI:-}" "${AMLAS_DATA_INSPECTION_SOURCE_COMMIT:-}" \
+    "${AMLAS_DATA_INSPECTION_ADMISSION_DIGEST:-}" \
+    || die "Invalid inspection discovery publication; no setup resources were changed."
+fi
+resolve_preparation_release_config "$AMLAS_AWS_ACCOUNT_ID" "$AWS_REGION" "$AMLAS_SSM_PREFIX"   || die "Invalid preparation configuration; no setup resources were changed."
+resolve_model_acquisition_release_config "$AMLAS_AWS_ACCOUNT_ID" "$AWS_REGION" "$AMLAS_SSM_PREFIX"   || die "Invalid model acquisition configuration; no setup resources were changed."
+if [ -n "${SAGEMAKER_EXECUTION_ROLE_ARN:-${AMLAS_SAGEMAKER_ROLE_ARN:-}}" ]; then
+  validate_selected_sagemaker_role_arn "${SAGEMAKER_EXECUTION_ROLE_ARN:-$AMLAS_SAGEMAKER_ROLE_ARN}" "$AMLAS_AWS_ACCOUNT_ID"
+fi
+
+# Runtime image construction must occur inside the selected AWS account.
+# Location-only checks precede host preparation; the image helper verifies Docker anew.
+if [ "$PREFLIGHT_ONLY" = "0" ] && [ "$SYNTH_ONLY" = "0" ] && [ "$SKIP_AGENT_RUNTIME" = "0" ]; then
+  require_account_build_host "$AMLAS_AWS_ACCOUNT_ID" "$AWS_REGION" --location-only \
+    || die "Run runtime image setup on Linux EC2 in the selected AWS account, or use --skip-agent-runtime."
+fi
 
 # =============================================================================
 # STEP 3 — Prerequisite verification / installation (idempotent, mac+linux)
@@ -285,12 +311,12 @@ else
     if docker buildx version >/dev/null 2>&1; then
       log_info "docker buildx present: $(docker buildx version 2>&1 | head -1)"
     elif [ "$SKIP_AGENT_RUNTIME" = "0" ]; then
-      die "docker buildx not available but the agent runtime phase needs it. Install buildx (Docker Desktop bundles it) or re-run with --skip-agent-runtime."
+      die "docker buildx not available but the agent runtime phase needs it. Install buildx on the selected account EC2 builder or re-run with --skip-agent-runtime."
     else
       log_warn "docker buildx missing — OK with --skip-agent-runtime (not building the runtime image)."
     fi
   elif [ "$SKIP_AGENT_RUNTIME" = "0" ]; then
-    die "docker not available/running but the FULL AGENT RUNTIME phase needs it to build+push the arm64 image. Start Docker, or re-run with --skip-agent-runtime (deploys the 9 CDK stacks only)."
+    die "docker not available/running but the FULL AGENT RUNTIME phase needs it to build+push the arm64 image. Start the local Docker daemon on the selected account EC2 builder, or re-run with --skip-agent-runtime (deploys the 9 CDK stacks only)."
   else
     log_warn "docker not available/running — OK: skipping the agent runtime phase (--skip-agent-runtime)."
   fi
@@ -529,10 +555,12 @@ else
   # 10.5b — create-or-discover the AgentCore runtime + its exec role, poll to READY.
   # Capture the output so we can extract the ARN it prints (AGENTCORE_RUNTIME_ARN=...).
   log_info "Creating/discovering the AgentCore runtime '$AGENTCORE_RUNTIME_NAME' (polls to READY; can take minutes) ..."
+  # The image was built from this tree in 10.5a, so it expands a packed environment.
   if RUNTIME_DEPLOY_OUT="$(AWS_ACCOUNT_ID="$AMLAS_AWS_ACCOUNT_ID" \
     AMLAS_AWS_REGION="$AWS_REGION" \
     AGENTCORE_RUNTIME_NAME="$AGENTCORE_RUNTIME_NAME" \
     IMAGE_TAG="$DEFAULT_AGENTCORE_IMAGE_TAG" \
+    AMLAS_RUNTIME_IMAGE_EXPANDS_ENV_PACK=1 \
     bash "$SCRIPT_DIR/lib/deploy_agentcore_runtime.sh" 2>&1)"; then
     printf '%s\n' "$RUNTIME_DEPLOY_OUT"
   else
@@ -552,8 +580,54 @@ else
   if [ "$RUNTIME_STATUS" != "READY" ] || [ -z "$RUNTIME_ARN" ] || [ "$RUNTIME_ARN" = "None" ] || ! printf '%s\n' "$RUNTIME_DEPLOY_OUT" | grep -qx 'AGENTCORE_RUNTIME_DEPLOY_DONE'; then
     die "Runtime output did not verify a usable READY ARN; SSM was not updated."
   fi
+  SELECTED_SM_ROLE="$(printf '%s\n' "$RUNTIME_DEPLOY_OUT" | sed -n 's/^RESOLVED_SAGEMAKER_ROLE_ARN=//p' | tail -1)"
+  SELECTED_ACQUISITION_IMAGE="$(printf '%s\n' "$RUNTIME_DEPLOY_OUT" | sed -n 's/^RESOLVED_DATA_ACQUISITION_IMAGE_URI=//p' | tail -1)"
+  SELECTED_ACQUISITION_SOURCE="$(printf '%s\n' "$RUNTIME_DEPLOY_OUT" | sed -n 's/^RESOLVED_DATA_ACQUISITION_SOURCE_COMMIT=//p' | tail -1)"
+  SELECTED_INSPECTION_IMAGE="$(printf '%s\n' "$RUNTIME_DEPLOY_OUT" | sed -n 's/^RESOLVED_DATA_INSPECTION_IMAGE_URI=//p' | tail -1)"
+  SELECTED_INSPECTION_SOURCE="$(printf '%s\n' "$RUNTIME_DEPLOY_OUT" | sed -n 's/^RESOLVED_DATA_INSPECTION_SOURCE_COMMIT=//p' | tail -1)"
+  SELECTED_INSPECTION_ADMISSION="$(printf '%s\n' "$RUNTIME_DEPLOY_OUT" | sed -n 's/^RESOLVED_DATA_INSPECTION_ADMISSION_DIGEST=//p' | tail -1)"
+  validate_selected_sagemaker_role_arn "$SELECTED_SM_ROLE" "$AMLAS_AWS_ACCOUNT_ID"
+  validate_acquisition_release_config "$AMLAS_AWS_ACCOUNT_ID" "$AWS_REGION" \
+    "$SELECTED_ACQUISITION_IMAGE" "$SELECTED_ACQUISITION_SOURCE" \
+    || die "Verified runtime did not return a valid acquisition binding; SSM was not updated."
+  validate_inspection_publication_config "$AMLAS_AWS_ACCOUNT_ID" "$AWS_REGION" \
+    "$SELECTED_INSPECTION_IMAGE" "$SELECTED_INSPECTION_SOURCE" "$SELECTED_INSPECTION_ADMISSION" \
+    || die "Verified runtime did not return a valid inspection binding; SSM was not updated."
+  returned_value="$(printf '%s\n' "$RUNTIME_DEPLOY_OUT" | sed -n 's/^RESOLVED_DATA_PREPARATION_IMAGE_URI=//p' | tail -1)"
+  export "AMLAS_DATA_PREPARATION_IMAGE_URI=$returned_value"
+  returned_value="$(printf '%s\n' "$RUNTIME_DEPLOY_OUT" | sed -n 's/^RESOLVED_DATA_PREPARATION_SOURCE_COMMIT=//p' | tail -1)"
+  export "AMLAS_DATA_PREPARATION_SOURCE_COMMIT=$returned_value"
+  returned_value="$(printf '%s\n' "$RUNTIME_DEPLOY_OUT" | sed -n 's/^RESOLVED_DATA_PREPARATION_ADMISSION_DIGEST=//p' | tail -1)"
+  export "AMLAS_DATA_PREPARATION_ADMISSION_DIGEST=$returned_value"
+  returned_value="$(printf '%s\n' "$RUNTIME_DEPLOY_OUT" | sed -n 's/^RESOLVED_DATA_PREPARATION_EXCLUSIONS_URI=//p' | tail -1)"
+  export "AMLAS_DATA_PREPARATION_EXCLUSIONS_URI=$returned_value"
+  returned_value="$(printf '%s\n' "$RUNTIME_DEPLOY_OUT" | sed -n 's/^RESOLVED_DATA_PREPARATION_EXCLUSIONS_VERSION_ID=//p' | tail -1)"
+  export "AMLAS_DATA_PREPARATION_EXCLUSIONS_VERSION_ID=$returned_value"
+  returned_value="$(printf '%s\n' "$RUNTIME_DEPLOY_OUT" | sed -n 's/^RESOLVED_DATA_PREPARATION_EXCLUSIONS_SHA256=//p' | tail -1)"
+  export "AMLAS_DATA_PREPARATION_EXCLUSIONS_SHA256=$returned_value"
+  returned_value="$(printf '%s\n' "$RUNTIME_DEPLOY_OUT" | sed -n 's/^RESOLVED_DATA_PREPARATION_EXCLUSIONS_BYTE_COUNT=//p' | tail -1)"
+  export "AMLAS_DATA_PREPARATION_EXCLUSIONS_BYTE_COUNT=$returned_value"
+  if [ -n "${AMLAS_DATA_PREPARATION_IMAGE_URI:-}" ]; then
+    python3 "$SCRIPT_DIR/lib/preparation_release_config.py" --account "$AMLAS_AWS_ACCOUNT_ID" --region "$AWS_REGION" --prefix "$AMLAS_SSM_PREFIX" --env-only >/dev/null       || die "Verified runtime did not return an admitted preparation tuple; SSM was not updated."
+  elif [ -n "${AMLAS_DATA_PREPARATION_SOURCE_COMMIT:-}${AMLAS_DATA_PREPARATION_ADMISSION_DIGEST:-}${AMLAS_DATA_PREPARATION_EXCLUSIONS_URI:-}${AMLAS_DATA_PREPARATION_EXCLUSIONS_VERSION_ID:-}${AMLAS_DATA_PREPARATION_EXCLUSIONS_SHA256:-}${AMLAS_DATA_PREPARATION_EXCLUSIONS_BYTE_COUNT:-}" ]; then
+    die "Verified runtime returned a partial preparation tuple; SSM was not updated."
+  fi
   publish_owned_parameter "$AMLAS_AGENTCORE_SSM_PARAM" "$RUNTIME_ARN"
   log_info "Published verified READY runtime ARN to SSM $AMLAS_AGENTCORE_SSM_PARAM=$RUNTIME_ARN"
+  publish_owned_parameter "${AMLAS_SAGEMAKER_ROLE_SSM_PARAM:-$AMLAS_SSM_PREFIX/sagemaker-execution-role-arn}" "$SELECTED_SM_ROLE"
+  if [ -n "$SELECTED_ACQUISITION_IMAGE" ]; then
+    publish_owned_parameter "${AMLAS_DATA_ACQUISITION_IMAGE_SSM_PARAM:-$AMLAS_SSM_PREFIX/data-acquisition-image-uri}" "$SELECTED_ACQUISITION_IMAGE"
+    publish_owned_parameter "${AMLAS_DATA_ACQUISITION_SOURCE_SSM_PARAM:-$AMLAS_SSM_PREFIX/data-acquisition-source-commit}" "$SELECTED_ACQUISITION_SOURCE"
+  fi
+  if [ -n "$SELECTED_INSPECTION_IMAGE" ]; then
+    publish_owned_parameter "${AMLAS_DATA_INSPECTION_IMAGE_SSM_PARAM:-$AMLAS_SSM_PREFIX/data-inspection-image-uri}" "$SELECTED_INSPECTION_IMAGE"
+    publish_owned_parameter "${AMLAS_DATA_INSPECTION_SOURCE_SSM_PARAM:-$AMLAS_SSM_PREFIX/data-inspection-source-commit}" "$SELECTED_INSPECTION_SOURCE"
+    if [ -n "$SELECTED_INSPECTION_ADMISSION" ]; then
+      publish_owned_parameter "${AMLAS_DATA_INSPECTION_ADMISSION_SSM_PARAM:-$AMLAS_SSM_PREFIX/data-inspection-admission-digest}" "$SELECTED_INSPECTION_ADMISSION"
+    fi
+  fi
+
+  publish_preparation_selection
 
   # 10.5d — publish the session (staging) bucket to SSM so the CLI/runtime resolve it
   # when .env is blank (F2). STEP 10.5 previously wrote ONLY the runtime-ARN param, so

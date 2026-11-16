@@ -143,14 +143,45 @@ class SageMakerTrainingBackend:
         budget: dict[str, Any] | None = None,
     ) -> JobHandle:
         """Submit via EXISTING ``submit_training_job`` (identical DDB+SM sequence)."""
-        from ...tools.sagemaker import SageMakerSubmitError, resolve_jobs_table, submit_training_job
+        from ...tools.sagemaker import (
+            SageMakerSubmitError,
+            resolve_jobs_table,
+            submit_training_job,
+            validate_training_controls,
+        )
 
         res = dict(resources or {})
-        config = dict(hyperparams or {})
-        # Surface the training input URI through the existing config seam.
-        config.setdefault("s3_input", train_uri)
-        if "hyperparameters" not in config and hyperparams:
-            config = {"hyperparameters": dict(hyperparams), "s3_input": train_uri}
+        supplied = dict(hyperparams or {})
+        control_keys = {
+            "image_uri", "instance_type", "instance_count", "volume_size_gb", "max_runtime_seconds",
+            "s3_input", "test_s3_uri", "validation_s3_uri", "target_column",
+            "content_type", "input_content_type", "channel_name", "metric_definitions",
+            "omit_metric_definitions", "sagemaker_kwargs", "skip_source_bundle", "vpc_config",
+        }
+        if "hyperparameters" in supplied:
+            config = dict(supplied)
+            config["hyperparameters"] = dict(supplied["hyperparameters"])
+        else:
+            config = {key: value for key, value in supplied.items() if key in control_keys}
+            model_parameters = {key: value for key, value in supplied.items() if key not in control_keys}
+            if model_parameters:
+                config["hyperparameters"] = model_parameters
+        config.update({key: value for key, value in res.items() if key in control_keys})
+        config["s3_input"] = train_uri
+        if val_uri is not None:
+            config["validation_s3_uri"] = val_uri
+        if target is not None:
+            config["target_column"] = target
+        config = validate_training_controls(config)
+        if budget and "max_runtime_seconds" in budget:
+            budget_control = validate_training_controls({"max_runtime_seconds": budget["max_runtime_seconds"]})
+            # An unspecified resource deadline must not install the historical
+            # default as a new cap on an explicitly declared budget deadline.
+            explicit_runtime = "max_runtime_seconds" in supplied or "max_runtime_seconds" in res
+            config["max_runtime_seconds"] = (
+                min(config["max_runtime_seconds"], budget_control["max_runtime_seconds"])
+                if explicit_runtime else budget_control["max_runtime_seconds"]
+            )
         jobs_table = resolve_jobs_table(res.get("jobs_table") or self._jobs_table)
         tracking_error = ""
         try:

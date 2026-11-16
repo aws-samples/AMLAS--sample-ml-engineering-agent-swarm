@@ -28,13 +28,18 @@ The readiness tools are CHEAP_READ (pure-reasoning go/no-go assessments).
 
 from __future__ import annotations
 
+import os
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
 from typing import Any
 
 from strands import tool
 
 from ..backends.ports import DeploymentBackend
 from ..backends.registry import REGISTRY, ResolvedBackend
-from ..backends.types import ModelRef
+from ..backends.types import EndpointRef, ModelRef, PackageRef
 from ..errors import tool_error_boundary
 
 __all__ = [
@@ -90,6 +95,91 @@ def _resolve(scale: int | str | None = None, steering: Any = None) -> ResolvedBa
     return REGISTRY.resolve(DeploymentBackend, steering=steering, scale=scale)
 
 
+@dataclass
+class _PackageScope:
+    active: bool = True
+    accepted_endpoint: EndpointRef | None = None
+
+
+@dataclass(frozen=True, eq=False)
+class _PackagedDeployment:
+    """Private original handoff, not a public package selector or approval."""
+
+    model_ref: ModelRef
+    package_ref: PackageRef
+    resolved: ResolvedBackend
+    pid: int
+    scope: _PackageScope
+    configuration: tuple[str | None, str, str, str] | None
+
+
+_ACTIVE_PACKAGE: ContextVar[_PackagedDeployment | None] = ContextVar("deployment_original_package", default=None)
+
+
+def _create_package(
+    model: Any, *, image: str | None = None, inference_code: str | None = None,
+    env: dict[str, Any] | None = None, scale: int | str | None = None,
+) -> _PackagedDeployment:
+    if isinstance(model, dict) and "package_arn" in model:
+        raise ValueError("a public package description is not an original model artifact")
+    resolved = _resolve(scale=scale)
+    model_ref = to_model_ref(model)
+    from ..backends.adapters.deployment import SageMakerDeploymentBackend
+
+    configuration = resolved.adapter._package_configuration() if type(resolved.adapter) is SageMakerDeploymentBackend else None
+    ref = resolved.adapter.package(model_ref=model_ref, image=image, inference_code=inference_code, env=env)
+    if type(ref) is not PackageRef:
+        raise ValueError("backend did not return the original package reference")
+    current = _resolve(scale=scale)
+    if (current.port != resolved.port or current.adapter_name != resolved.adapter_name
+            or type(current.adapter) is not type(resolved.adapter)):
+        raise ValueError("deployment backend selection changed during packaging")
+    if type(resolved.adapter) is SageMakerDeploymentBackend:
+        if (resolved.adapter._package_configuration() != configuration
+                or current.adapter._package_configuration() != configuration):
+            raise ValueError("deployment configuration changed during packaging")
+    return _PackagedDeployment(model_ref, ref, resolved, os.getpid(), _PackageScope(), configuration)
+
+
+def _package_result(original: _PackagedDeployment) -> dict[str, Any]:
+    ref = original.package_ref
+    return {"package_arn": ref.arn, "group": ref.group, "version": ref.version,
+            "approval_status": ref.approval_status, "adapter": original.resolved.adapter_name,
+            "reason": original.resolved.reason}
+
+
+@contextmanager
+def _packaged_deployment(
+    model: Any, *, image: str | None = None, env: dict[str, Any] | None = None,
+) -> Iterator[_PackagedDeployment]:
+    """Retain the actual package only in this live, same-process flow scope."""
+    original = _create_package(model, image=image, env=env)
+    token = _ACTIVE_PACKAGE.set(original)
+    try:
+        yield original
+    finally:
+        original.scope.active = False
+        _ACTIVE_PACKAGE.reset(token)
+
+
+def _require_original_package(original: _PackagedDeployment) -> None:
+    if (type(original) is not _PackagedDeployment or _ACTIVE_PACKAGE.get() is not original
+            or original.pid != os.getpid() or original.scope.active is not True
+            or type(original.model_ref) is not ModelRef or type(original.package_ref) is not PackageRef):
+        raise ValueError("original deployment package scope is unavailable")
+    current = _resolve()
+    held = original.resolved
+    if (current.port != held.port or current.adapter_name != held.adapter_name
+            or type(current.adapter) is not type(held.adapter)):
+        raise ValueError("deployment backend selection changed after packaging")
+    from ..backends.adapters.deployment import SageMakerDeploymentBackend
+
+    if type(held.adapter) is SageMakerDeploymentBackend:
+        if (current.adapter._package_configuration() != original.configuration
+                or held.adapter._package_configuration() != original.configuration):
+            raise ValueError("deployment configuration changed after packaging")
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Stage 10 — deployment tools (T-DEPLOY-*)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -108,11 +198,8 @@ def package_model(
     Returns ``{"package_arn","group","approval_status","adapter"}``.
     """
     try:
-        resolved = _resolve(scale=scale)
-        ref = resolved.adapter.package(model_ref=to_model_ref(model), image=image,
-                                       inference_code=inference_code, env=env)
-        return {"package_arn": ref.arn, "group": ref.group, "version": ref.version,
-                "approval_status": ref.approval_status, "adapter": resolved.adapter_name, "reason": resolved.reason}
+        original = _create_package(model, image=image, inference_code=inference_code, env=env, scale=scale)
+        return _package_result(original)
     except Exception as e:
         return {"success": False, "error": f"package_model failed: {e}"}
 
@@ -133,13 +220,33 @@ def deploy_endpoint(
     ``plan_approve_execute``. Returns ``{"endpoint_name","arn","mode","adapter"}``.
     """
     try:
-        resolved = _resolve(scale=scale)
-        ep = resolved.adapter.deploy(model_ref=to_model_ref(model), mode=mode,
-                                     resources=resources, autoscaling=autoscaling)
-        return {"endpoint_name": ep.name, "arn": ep.arn, "mode": ep.mode, "status": "InService",
+        if type(model) is _PackagedDeployment:
+            _require_original_package(model)
+            resolved = model.resolved
+            from ..backends.adapters.deployment import SageMakerDeploymentBackend
+
+            if type(resolved.adapter) is SageMakerDeploymentBackend:
+                ep = resolved.adapter._deploy_packaged(binding=model, mode=mode,
+                                                      resources=resources, autoscaling=autoscaling)
+            else:
+                ep = resolved.adapter.deploy(model_ref=model.model_ref, mode=mode,
+                                             resources=resources, autoscaling=autoscaling)
+        else:
+            if isinstance(model, dict) and "package_arn" in model:
+                raise ValueError("a public package description is not an original deployment handoff")
+            resolved = _resolve(scale=scale)
+            ep = resolved.adapter.deploy(model_ref=to_model_ref(model), mode=mode,
+                                         resources=resources, autoscaling=autoscaling)
+        if type(model) is _PackagedDeployment:
+            _require_original_package(model)
+        return {"endpoint_name": ep.name, "arn": ep.arn, "mode": ep.mode,
+                "status": getattr(ep, "status", "Unknown"),
                 "adapter": resolved.adapter_name, "reason": resolved.reason}
     except Exception as e:
-        return {"success": False, "error": f"deploy_endpoint failed: {e}"}
+        result = {"success": False, "error": f"deploy_endpoint failed: {e}"}
+        if type(model) is _PackagedDeployment and model.scope.accepted_endpoint is not None:
+            result.update(status="Unknown", outcome_unknown=True)
+        return result
 
 
 @tool

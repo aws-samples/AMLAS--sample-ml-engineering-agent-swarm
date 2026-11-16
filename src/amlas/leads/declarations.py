@@ -70,6 +70,7 @@ from ..tools.aws_control import (
     remediate_dispatch_preflight,
     request_quota_increase,
 )
+from ..tools.coding_cases import get_coding_case_freeze, list_coding_case_catalog
 from ..tools.lake import list_lake_catalog, read_lake_slice, write_lake_dataset
 from ..tools.mlops import mlops_kpi_scorecard
 from ..tools.research.strands_tools import research_fetch_urls
@@ -271,12 +272,15 @@ def build_lead(
     if hooks_factory is not None:
         sub_kwargs["hooks_factory"] = hooks_factory
 
-    tools: list[Any] = [
-        sub.builder(model=sub_models.get(sub.model_kwarg), **sub_kwargs).as_tool(
-            name=sub.tool_name, preserve_context=True
-        )
-        for sub in declaration.sub_agents
-    ]
+    tools: list[Any] = []
+    for sub in declaration.sub_agents:
+        child = sub.builder(model=sub_models.get(sub.model_kwarg), **sub_kwargs)
+        if sub.tool_name in {"data_collection_agent", "trainer_tuner", "fine_tune"}:
+            from ..control_plane.acquisition_state import acquisition_agent_tool
+
+            tools.append(acquisition_agent_tool(child, name=sub.tool_name))
+        else:
+            tools.append(child.as_tool(name=sub.tool_name, preserve_context=True))
     tools.extend(declaration.direct_tools)
 
     return build_agent(
@@ -317,7 +321,7 @@ RESEARCH_LEAD = LeadDeclaration(
         ),
         SubAgentDeclaration("solution_survey_agent", build_solution_survey_agent, "solution_survey_model"),
     ),
-    direct_tools=(research_fetch_urls,),
+    direct_tools=(research_fetch_urls, list_coding_case_catalog),
     description=(
         "Orchestrates R1+R2+R3 subs to produce a signed hypothesis.json; also owns the M6 "
         "Stage 0–3 front-end (research scan/curate → business-goal → framing → solution-survey)."
@@ -356,7 +360,7 @@ ML_EXECUTION_LEAD = LeadDeclaration(
         SubAgentDeclaration("trainer_tuner", build_trainer_tuner_agent, "trainer_tuner_model"),
         SubAgentDeclaration("fine_tune", build_fine_tune_agent, "fine_tune_model"),
     ),
-    direct_tools=(),
+    direct_tools=(list_coding_case_catalog, get_coding_case_freeze),
     description="D2 orchestrator — selects algo, tunes, or fine-tunes; emits model artifact.",
 )
 

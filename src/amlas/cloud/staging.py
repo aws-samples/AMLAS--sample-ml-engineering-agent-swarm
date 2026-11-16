@@ -182,16 +182,10 @@ def load_y_true_npy(
     This is the N2 loader the Runtime entrypoint uses for ``y_true_path``:
     when the operator passes an ``s3://`` URI we download it first, then load.
 
-    FIX-19b (Subtask-13): a CLASSIFICATION target of STRING class labels (e.g. string-label classification's
-    ``fault_class`` = normal/mixed_fault_1/…) is staged as an OBJECT-dtype ``.npy`` (staging
-    writes ``test[target].to_numpy()`` — string labels → object array). A plain
-    ``np.load(allow_pickle=False)`` REFUSES object arrays, so the Arbiter's y_true load raised
-    ``ValueError: Object arrays cannot be loaded when allow_pickle=False`` BEFORE grading
-    (string-label classification run #5 on v7: terminal status=failed, iterations=0 — y_true loads before y_pred,
-    so it fired first). We route through the SAME SECURITY-restricted ``_load_npy_secure`` used
-    for y_pred (FIX-19): non-object arrays load with allow_pickle=False; object-dtype label
-    vectors are recovered via a restricted unpickler (numpy reconstruction + Python scalars
-    ONLY) — arbitrary pickle is NEVER executed.
+    Labels use the same bounded data-only loader as predictions. Writers encode
+    primitive string labels as Unicode arrays, so no object reconstruction is
+    needed. Legacy object arrays are refused and require a separately isolated
+    conversion path.
     """
     from .sandbox_staging import _load_npy_secure  # lazy: avoid import cycle at module load
 
@@ -323,7 +317,9 @@ def stage_dataset(
     test.to_csv(test_path, index=False)
     # N2: y_true is taken from the SAME held-out test split → 1:1 aligned with
     # the rows the ML Lead will predict on.
-    np.save(y_true_path, test[target].to_numpy())
+    from ..security.model_artifacts import dump_numpy_data
+
+    dump_numpy_data(test[target].to_numpy(), y_true_path)
 
     return StagedData(
         train_path=str(train_path),
@@ -359,10 +355,13 @@ def verify_staged_test_split(test_path: str, y_true_path: str) -> dict[str, Any]
         "detail": "",
     }
     try:
-        n_y_true = len(np.load(y_true_path, allow_pickle=True))
-        # ``nrows``-free count: read the column-free row count without materialising the frame.
-        n_test = int(sum(1 for _ in open(test_path, encoding="utf-8")) - 1)
-    except (OSError, ValueError) as e:
+        from ..security.model_artifacts import UntrustedArtifactError
+        from .sandbox_staging import _load_npy_secure
+
+        n_y_true = len(_load_npy_secure(Path(y_true_path)))
+        # A quoted code/text cell can span physical lines; count logical records.
+        n_test = sum(len(chunk) for chunk in pd.read_csv(test_path, chunksize=10000))
+    except (OSError, ValueError, UntrustedArtifactError) as e:
         out["detail"] = f"could not verify: {type(e).__name__}: {e}"
         return out
 

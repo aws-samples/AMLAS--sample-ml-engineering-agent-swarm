@@ -121,7 +121,9 @@ def run_training(
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
     y_pred_path = out / _YPRED_FILENAME
-    np.save(y_pred_path, np.asarray(y_pred_test))
+    from ..security.model_artifacts import dump_numpy_data
+
+    dump_numpy_data(y_pred_test, y_pred_path)
     print(f"WROTE {y_pred_path} {len(y_pred_test)}", flush=True)
 
     summary = {

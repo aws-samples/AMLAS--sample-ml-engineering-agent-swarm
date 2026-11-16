@@ -194,10 +194,13 @@ class HostPreparationTests(unittest.TestCase):
         self.assertFalse(any(c["tool"] in ("dnf", "curl", "systemctl") for c in self.calls()))
         self.assertEqual(list(self.tmp.iterdir()), [])
 
-    def test_legacy_al2_gives_container_remediation_without_mutation(self):
+    def test_legacy_al2_requires_account_ec2_without_mutation(self):
         result = self.run_shell('_amlas_host_platform(){ printf "amzn:2\\n"; }; prepare_host_prerequisites')
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("container", (result.stdout + result.stderr).lower())
+        self.assertIn(
+            "al2023 ec2 build host in the selected aws account", (result.stdout + result.stderr).lower()
+        )
+        self.assertIn("cloud desktop image builds are unsupported", (result.stdout + result.stderr).lower())
         self.assertFalse(any(c["tool"] in ("sudo", "dnf", "curl", "systemctl") for c in self.calls()))
 
     def test_existing_aws_is_preserved_before_identity(self):

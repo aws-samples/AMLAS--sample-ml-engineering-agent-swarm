@@ -147,7 +147,7 @@ prepare_host_prerequisites() {
     platform="$(_amlas_host_platform)" || return 1
     case "$platform" in
       amzn:2023) ;;
-      amzn:2*) _amlas_host_error 'Amazon Linux 2 cannot run the required native Node toolchain; use the documented Cloud Desktop container route or an AL2023 EC2 host.'; return 1 ;;
+      amzn:2*) _amlas_host_error 'Amazon Linux 2 cannot run the required native Node toolchain; use an AL2023 EC2 build host in the selected AWS account; Cloud Desktop image builds are unsupported.'; return 1 ;;
       *) _amlas_host_error 'Automatic package preparation supports Amazon Linux 2023. On Ubuntu/Debian or another Linux host, install Node >=22, npm, Docker/buildx, CMake, Git, build tools, zip and Python 3.11 through approved host administration, then retry.'; return 1 ;;
     esac
     sudo -n true >/dev/null 2>&1 || { _amlas_host_error 'Authorized noninteractive sudo is required for AL2023 package preparation.'; return 1; }

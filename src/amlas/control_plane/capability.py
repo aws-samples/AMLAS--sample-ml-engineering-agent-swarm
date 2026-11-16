@@ -67,6 +67,7 @@ __all__ = [
 # different name — register those explicitly via ``register_capability_executor`` /
 # this override table. The table maps flow_id → (module path, attribute name).
 _EXECUTOR_OVERRIDES: dict[str, tuple[str, str]] = {
+    "data_preparation_flow": ("..flows.coding_preparation_flow", "execute_coding_preparation_flow"),
     # project_init_flow lives in control_plane.project_memory (not flows/).
     "project_init_flow": ("..control_plane.project_memory", "project_init_flow"),
     # deploy_flow is SELF-gating (``run_deploy_flow`` wraps ``plan_approve_execute`` itself). The
@@ -357,7 +358,9 @@ def required_params_for(capability_id: str) -> tuple[list[str], list[str]]:
     for name, p in sig.parameters.items():
         if p.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
             continue
-        if name == "self":
+        if name == "self" or (
+            capability_id == "data_preparation_flow" and name in {"store", "policy", "catalog"}
+        ):
             continue
         if p.default is inspect.Parameter.empty:
             required.append(name)
@@ -392,6 +395,7 @@ def invoke_capability(
     steering: Any | None = None,
     surface: str = "api",
     plan_only: bool = False,
+    _trusted_preparation_store: Any = None,
 ) -> CapabilityResult:
     """The ADR-010 single funnel — invoke a registered capability (flow) from ANY surface.
 
@@ -420,32 +424,75 @@ def invoke_capability(
     flow = get_flow(capability_id)
     if flow is None:
         return CapabilityResult(
-            capability_id=capability_id, surface=surface, status="error",
-            approved=False, error=f"unknown capability {capability_id!r}",
+            capability_id=capability_id,
+            surface=surface,
+            status="error",
+            approved=False,
+            error=f"unknown capability {capability_id!r}",
         )
 
+    # Preparation keeps private state outside public parameters, plans and schemas.
+    if flow.flow_id == "data_preparation_flow" and any(
+        name not in {"acquisition_request_refs", "profile_id", "profile_version"} for name in params
+    ):
+        return CapabilityResult(
+            capability_id=flow.flow_id,
+            surface=surface,
+            status="error",
+            approved=False,
+            gated=True,
+            executed=False,
+            error="Preparation accepts only acquisition references and fixed semantic selectors.",
+        )
     plan = preview_flow_plan(flow_id=flow.flow_id, params=params, steering=steering)
 
     if plan_only:
         return CapabilityResult(
-            capability_id=flow.flow_id, surface=surface, status="planned",
-            approved=False, gated=_is_gated(flow), executed=False, plan=plan,
+            capability_id=flow.flow_id,
+            surface=surface,
+            status="planned",
+            approved=False,
+            gated=_is_gated(flow),
+            executed=False,
+            plan=plan,
         )
 
     executor = resolve_executor(flow.flow_id)
     if executor is None:
         return CapabilityResult(
-            capability_id=flow.flow_id, surface=surface, status="error",
-            approved=False, gated=_is_gated(flow), plan=plan,
+            capability_id=flow.flow_id,
+            surface=surface,
+            status="error",
+            approved=False,
+            gated=_is_gated(flow),
+            plan=plan,
             error=f"no executor resolvable for capability {flow.flow_id!r}",
         )
+
+    if flow.flow_id == "data_preparation_flow":
+        from .preparation_state import SessionPreparationStore
+
+        original = executor
+        trusted = (
+            _trusted_preparation_store
+            if isinstance(_trusted_preparation_store, SessionPreparationStore)
+            else None
+        )
+
+        def execute_with_private_state(**public_params: Any) -> Any:
+            return original(**public_params, store=trusted)
+
+        executor = execute_with_private_state
 
     # ── gated path: preview → approval gate → execute (aborts before spend on deny) ──
     if _is_gated(flow):
         try:
             outcome = plan_approve_execute(
-                flow_id=flow.flow_id, params=params, executor=executor,
-                policy=policy, steering=steering,
+                flow_id=flow.flow_id,
+                params=params,
+                executor=executor,
+                policy=policy,
+                steering=steering,
             )
         except Exception as e:
             # Universal error handling: capture the flow error into the
@@ -454,14 +501,33 @@ def invoke_capability(
             # CapabilityResult). Guarded so telemetry never breaks a dispatch.
             _capture_flow_error(e, flow_id=flow.flow_id, surface=surface)
             return CapabilityResult(
-                capability_id=flow.flow_id, surface=surface, status="error",
-                approved=True, gated=True, executed=True, plan=plan,
+                capability_id=flow.flow_id,
+                surface=surface,
+                status="error",
+                approved=True,
+                gated=True,
+                executed=True,
+                plan=plan,
                 error=str(e),
             )
         approved = bool(outcome.get("approved"))
         gated_status = "completed" if approved else "denied"
-        _emit_capability_trace(flow=flow, params=params, surface=surface,
-                               status=gated_status, result=outcome.get("result"))
+        prepared_result = outcome.get("result")
+        if (
+            flow.flow_id == "data_preparation_flow"
+            and isinstance(prepared_result, dict)
+            and prepared_result.get("accepted") is not True
+        ):
+            if prepared_result.get("status") in {
+                "configuration_missing",
+                "unsupported_profile",
+                "denied",
+                "refused",
+            }:
+                gated_status = prepared_result["status"]
+        _emit_capability_trace(
+            flow=flow, params=params, surface=surface, status=gated_status, result=outcome.get("result")
+        )
         return CapabilityResult(
             capability_id=flow.flow_id,
             surface=surface,
@@ -479,17 +545,31 @@ def invoke_capability(
         result = executor(**params)
     except Exception as e:
         _capture_flow_error(e, flow_id=flow.flow_id, surface=surface)
-        _emit_capability_trace(flow=flow, params=params, surface=surface,
-                               status="error", result=None)
+        _emit_capability_trace(flow=flow, params=params, surface=surface, status="error", result=None)
         return CapabilityResult(
-            capability_id=flow.flow_id, surface=surface, status="error",
-            approved=True, gated=False, executed=True, plan=plan, error=str(e),
+            capability_id=flow.flow_id,
+            surface=surface,
+            status="error",
+            approved=True,
+            gated=False,
+            executed=True,
+            plan=plan,
+            error=str(e),
         )
-    _emit_capability_trace(flow=flow, params=params, surface=surface,
-                           status="completed", result=result)
+    _emit_capability_trace(flow=flow, params=params, surface=surface, status="completed", result=result)
     return CapabilityResult(
-        capability_id=flow.flow_id, surface=surface, status="completed",
-        approved=True, gated=False, executed=True, plan=plan, result=result,
-        decision={"decision": "approved", "reason": "cheap read — auto-approved",
-                  "action_class": ActionClass.CHEAP_READ.value, "gated": False},
+        capability_id=flow.flow_id,
+        surface=surface,
+        status="completed",
+        approved=True,
+        gated=False,
+        executed=True,
+        plan=plan,
+        result=result,
+        decision={
+            "decision": "approved",
+            "reason": "cheap read — auto-approved",
+            "action_class": ActionClass.CHEAP_READ.value,
+            "gated": False,
+        },
     )

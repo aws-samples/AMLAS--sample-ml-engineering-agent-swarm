@@ -153,6 +153,50 @@ PUBLIC_AWS_ACCOUNT_IDS = {
     "990339680094",
 }
 
+# Exact public Hub commit pins reviewed against the original model API.
+# These are complete integrity identifiers, never account-ID exemptions.
+PUBLIC_MODEL_REVISION_PINS = {
+    # https://huggingface.co/api/models/Qwen/Qwen3.5-9B/revision/c202236235762e1c871ad0ccb60c8ee5ba337b9a
+    "c202236235762e1c871ad0ccb60c8ee5ba337b9a",  # pragma: allowlist secret
+}
+
+# Exact public HumanEval metadata hashes, recomputed from all164 official cases.
+# Original public source revision: 6d43fb980f9fee3c892a914eda09951f772ad10d.
+# The214438-byte JSONL has SHA256:
+# 1d49078ba3e2b196b9344535bef34a43021f038fad9561d6ee7c53450609a6a2
+# Only these21 complete hashes contain account-shaped fragments; no path or
+# general hash exemption is granted. Private/secret scans still use original bytes.
+PUBLIC_ORACLE_INTEGRITY_PINS = {
+    "016242643122db3e21319d9a28d85c518e4dee3ec44846c783df43a8ba516206",  # pragma: allowlist secret
+    "1c4358fa49db2bdf8ce6f24c604765987914a9f6d51a7109c68272c9f7f66cd8",  # pragma: allowlist secret
+    "1eb46648867a6e499ee7e4fa6500b594937f325209204606d7391c8cad9df9c4",  # pragma: allowlist secret
+    "33902aa28a76a3d18738481f56efa1dbf4a361328768356c6de78461113bfeee",  # pragma: allowlist secret
+    "58845cc488ac0df5ed6876e026532380238c02e3035897db32428fa719bd4e38",  # pragma: allowlist secret
+    "5de2b4ef399da58cdb28f9c2378ffa86b41dc20d205428828151cecea0d2968d",  # pragma: allowlist secret
+    "66607b421ed8b5eb91de52ca96f1b071ecc536edf716451650816ae4e7701f64",  # pragma: allowlist secret
+    "76075722f14f440573576993f00d079bbb312818c40a47974f99bf0d9374d905",  # pragma: allowlist secret
+    "856a164439599802d5210e2969c1c5673c84b83b4bdca5db34384d7b10d3d741",  # pragma: allowlist secret
+    "92ee00c52b7151e6d841ebb4bddc0cef994b5b0d65d7cf090033676450a203e9",  # pragma: allowlist secret
+    "9a8b1ce14654166499b901763884822e6ed09c454f249a165f0c13d8027bed53",  # pragma: allowlist secret
+    "9f7b61f73bfc14d91aa4c0ce07643312ead6911e631063872699b0409b924a2c",  # pragma: allowlist secret
+    "a6e0d9cbd980c75fb58baac28d3f6b222e2d5bbbe2751b23d508010097921e46",  # pragma: allowlist secret
+    "af63ce924260924735c5c424f29e2ca760971f45b9b1d63e1aef1a2b9b4bb26a",  # pragma: allowlist secret
+    "b399707294183c0582701aa5a4ae4f0d5bee2550649c193cb9fd3f3c42b6a6b8",  # pragma: allowlist secret
+    "c4f2fe113796217362ebfa8437244422d6e2ed83b00a97073c776a92bce55255",  # pragma: allowlist secret
+    "ca340d7a433f9d538412794976c3323fd6efc900f8e22781e06c7e4d45942146",  # pragma: allowlist secret
+    "e49218abe89b2b138512731659d96115b045637b8cebe43d2407656209332e58",  # pragma: allowlist secret
+    "e85b90468fd66c094cdc9a39b501879444441c741ee3a9d954f3a3bc2c6b82c7",  # pragma: allowlist secret
+    "f744311bc2c4ea109d693435515847f3f8292c154f780205ce2a614acc1890e0",  # pragma: allowlist secret
+    "f8c8a5b02862a0d5acb032bb0e4b9d5b1f057077479202d96f7fb5eedf2db2e9",  # pragma: allowlist secret
+}
+
+# Exact synthetic request checksum independently recomputed from source-owned
+# reload/training fixtures. Only this complete integrity token is exempted;
+# numeric fragments, other checksums and original private/secret scans are not.
+PUBLIC_FIXTURE_INTEGRITY_PINS = {
+    "80aed81a4098edb131525060103bbff66b214a8ca82ed87d4d6b55b66916ea6b",  # pragma: allowlist secret
+}
+
 # Keep organization-specific hosts, groups and identities in an external release denylist.
 INTERNAL_PATTERNS = (
     (
@@ -298,6 +342,24 @@ def scan_text(path: str, text: str, private_literals: Iterable[str] = ()) -> lis
         account_text,
         flags=re.IGNORECASE,
     )
+    account_text = re.sub(
+        r"(?<!\S)--hash=sha256:[a-f0-9]{64}(?=\s|$)",
+        "--hash=<integrity-digest>",
+        account_text,
+        flags=re.IGNORECASE,
+    )
+    for revision in PUBLIC_MODEL_REVISION_PINS:
+        account_text = re.sub(
+            rf"(?<![a-fA-F0-9]){re.escape(revision)}(?![a-fA-F0-9])",
+            "<reviewed-public-model-revision>",
+            account_text,
+        )
+    for digest in PUBLIC_ORACLE_INTEGRITY_PINS | PUBLIC_FIXTURE_INTEGRITY_PINS:
+        account_text = re.sub(
+            rf"(?<![a-fA-F0-9]){re.escape(digest)}(?![a-fA-F0-9])",
+            "<reviewed-public-oracle-integrity>",
+            account_text,
+        )
     for account_id in re.findall(r"(?<!\d)\d{12}(?!\d)", account_text):
         if account_id not in PUBLIC_AWS_ACCOUNT_IDS:
             findings.append(Finding(path, "unknown-account-id", "contains an unreviewed 12-digit value"))
@@ -390,7 +452,10 @@ def scan_repository(repo: Path, ref: str | None = None) -> list[Finding]:
         exact_dox_alias = (
             mode == "120000"
             and relative == "CLAUDE.md"
-            and any(target_mode == "100644" and target_path == "AGENTS.md" for target_mode, _, target_path in entries)
+            and any(
+                target_mode == "100644" and target_path == "AGENTS.md"
+                for target_mode, _, target_path in entries
+            )
             and subprocess.check_output(["git", "cat-file", "blob", oid], cwd=repo) == b"AGENTS.md"
         )
         if mode not in {"100644", "100755"} and not exact_dox_alias:

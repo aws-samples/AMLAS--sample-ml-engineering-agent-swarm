@@ -11,6 +11,26 @@ The root instructions own repository authority and the full verification contrac
 
 ## Local Contracts
 
+- `provision_qwen_cpu_tests.sh NEW_OUTPUT_DIRECTORY` provisions the separate hash-locked Python3.11/LinuxAMD64 CPU test closure into a new overlay, fetches only five fixed source-catalog metadata files, and provides the one pinned public evaluation file through `qwen_cpu_test_case_file.py`. Source the emitted `environment.sh` before complete pytest; GitHub transports these fixed variables through `GITHUB_ENV` to its next test step. The downloader reuses guarded public TLS/DNS transport, verifies exact SHA/count and accepts no model/revision/file selector; no tensor weights or repository code are downloaded. CPU dependencies receive a separate strict OSV audit (the official CPU local version is absent from PyPI), without excluding Torch; the GPU/runtime lock is unchanged.
+
+- `qwen_cpu_test_case_file.py --destination ABSOLUTE_FILE` provides the pinned public evaluation file for `AMLAS_TEST_HUMANEVAL_PARQUET`. It parses repository, revision, file name, byte count and SHA256 literals from `src/amlas/data_eng/coding_case_profile.py` at run time without importing the package or duplicating pins. The command line has no source, revision, file or scheme selector. With the variable unset, it uses the Python standard library and the public resolve address. It requests HTTPS only, follows redirects only to HTTPS, reads at most one byte past the pinned size, and makes three attempts for transport faults and temporary server statuses. Each attempt sends a new request object for the source address, because the standard library's proxy handler rewrites the object it sends. A request that no longer names the source host over HTTPS, or an answer whose final address is not HTTPS, refuses. A named verified file is copied without requests. An absent or differing named file refuses. It writes the read-only file only after size and SHA256 match. A failed fetch, a wrong size or hash, or an existing destination with other bytes exits 1 with one `public case file not provided:` line on stderr. A failed fetch or a wrong size or hash writes nothing under the final name. An existing destination with other bytes is left as it is and is never overwritten or removed. `provision_qwen_cpu_tests.sh` runs it after metadata and before writing `environment.sh`. That file adds `export AMLAS_TEST_HUMANEVAL_PARQUET=<NEW_OUTPUT_DIRECTORY>/humaneval/test-00000-of-00001.parquet` on its own line between metadata and offline switches. Other lines remain unchanged. A refusal stops the script before `environment.sh` exists.
+
+- Independently verified synthetic reload fixture checksums receive only exact whole-token integrity handling. The reviewed TRAIN_REQUEST SHA is a complete request-byte checksum; its interior numeric run is never an account exemption. Preserve all six frozen legacy/digest/request values, exact inline nonsecret annotations, altered/unreviewed/fragment/ARN/ECR/bucket/domain negatives and the original secret/private scans. No path or general hash allowlist applies.
+
+- `verify_repository_governance.py` excludes only reviewed complete public model
+  revision tokens and21 exact HumanEval metadata SHA256 tokens from numeric
+  account detection. Oracle pins are recomputed from the original214438-byte
+  public JSONL with source SHA256 `1d49078ba3e2b196b9344535bef34a43021f038fad9561d6ee7c53450609a6a2`.
+  Source inline secret-scan annotations apply only to independently verified public
+  hashes. Exact-line regressions freeze the complete oracle metadata literal and
+  reviewed annotations; changed or extra annotated values refuse.
+  No path or generic hash exemption applies. Private literals and secrets
+  scan original bytes first; fragments, altered pins and separate accounts refuse.
+  Complete whitespace-delimited pip `--hash=sha256:`64-hex tokens receive only
+  integrity-context numeric handling. Malformed/extended tokens, adjacent account
+  values, private hosts and all original secret/private-literal scans stay active;
+  this is not a package trust or file exemption.
+
 - `dox_lint.py` is byte-vendored from the canonical DOX lint. `--recursive` enforces maintained nested-directory coverage; it emits `DOX PASS`/`DOX FAIL` and exits0/1. CI invokes it before dependency preparation.
 
 - `lib/deployment_manifest.py` runs with standard-library Python before project dependency
@@ -86,6 +106,35 @@ The root instructions own repository authority and the full verification contrac
   DEFAULT. Poll its native READY status and exact liveVersion. targetVersion may be
   absent or null for DEFAULT; a present target must still match. Missing/null/wrong
   liveVersion never passes. This exception does not change named-endpoint contracts.
+- Setup publishes the verified selected SageMaker role and optional acquisition
+  image/source pair through the existing owned SSM publisher only after native
+  runtime READY verification. Partial/malformed pairs fail before writes.
+- Inspection image/source and trusted admission digest use the selected-namespace
+  owned publisher after READY. Ordinary setup requires a supplied matching native
+  admission marker when a pair is selected, both before cloud writes and before
+  READY discovery publication. Omission never retains an old marker beside a new
+  pair. Read-only setup and direct runtime bootstrap may configure an unadmitted
+  pair; neither authorizes ordinary inspection publication. Never synthesize admission.
+
+- Preparation configuration is resolved by the operator-only complete-tuple helper
+  before runtime writes and transported in the native runtime overlay. Setup publishes
+  only the complete verified returned tuple through the existing owned parameter writer.
+  Explicit partial overrides never borrow old SSM admission/exclusion fields.
+
+- coding_case_worker_native.py is the root-owned fixed case image wrapper; imports only the minimal case_worker_pkg after static initialization, with no caller paths or script selectors.
+
+- Runtime setup verifies the selected-account EC2/STS location before host
+  prerequisites even with `--skip-deps`; actual image construction verifies the
+  local Docker binding again. Docker-free preflight, synth and skip-runtime modes
+  retain their existing contracts.
+
+- `coding_pair_worker_native.py` is the fixed image-owned wrapper; it verifies native permanent identity and original private outputFD3 before adding the fixed source package path and importing the paired worker main. `paired_worker_requirements.py` selects the reviewed CPU import closure from immutable uv.lock versions/wheel hashes, refuses missing/ambiguous selected packages and has no unpinned or source-build fallback. Its requirements generation/install are image-build operations restricted to the verified AWS builder; unit tests inspect the function in memory.
+
+- Governed setup/runtime deploy resolves the closed model acquisition selector
+  tuple through the operator-only helper before writes. Explicit complete ENV
+  wins; absent selectors may come only from the selected exact SSM namespace.
+  Partial/unverified selections refuse. Transport grants no native admission and
+  adds no model parameter publication or TUI startup reads.
 
 ## Work Guidance
 
@@ -109,3 +158,4 @@ proves the guards against the fake native state; it does not prove live AWS clea
 | Path | Covers |
 | --- | --- |
 | `lib/AGENTS.md` | Maintained lib boundary |
+| `ci_shard/AGENTS.md` | Sharded full-CI tools: plan, shard plugin, merge, orchestrator, observer and equality checks |

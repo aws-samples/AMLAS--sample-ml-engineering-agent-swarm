@@ -49,6 +49,7 @@ from ..tools.evaluation_tools import (
 )
 from ..tools.fe_tools import auto_preprocess
 from ..tools.hpo_tools import train_ensemble, tune_model
+from ..tools.huggingface_data import acquire_huggingface_dataset, inspect_huggingface_dataset
 from ..tools.imputation import (
     apply_imputation_plan,
     evaluate_imputation,
@@ -104,6 +105,8 @@ PIPELINE_TOOLS = [
     load_dataset,
     split_dataset,
     describe_dataset,
+    inspect_huggingface_dataset,
+    acquire_huggingface_dataset,
     # Data quality tools (new)
     score_data_quality,
     detect_anomalies,

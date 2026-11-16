@@ -39,6 +39,30 @@ if name == "aws":
 with open(os.environ["TEST_CALLS"], "a") as stream:
  stream.write(json.dumps({"tool": name, "args": args, "raw_args": raw_args, "profile": os.environ.get("AWS_PROFILE")}) + "\\n")
 if name == "aws":
+ if args[:2] == ["ssm", "get-parameter"] and "/data-preparation-" in args[args.index("--name")+1]:
+  assert args[args.index("--name")+1].startswith(os.environ.get("AMLAS_SSM_PREFIX", "/"+os.environ.get("AMLAS_DEPLOYMENT_PREFIX", "amlas"))+"/data-preparation-")
+  print("ParameterNotFound",file=sys.stderr);sys.exit(254)
+ if args[:2] == ["ssm", "get-parameter"] and "/model-weight-acquisition-" in args[args.index("--name")+1]:
+  name=args[args.index("--name")+1]
+  prefix=os.environ.get("AMLAS_SSM_PREFIX", "/"+os.environ.get("AMLAS_DEPLOYMENT_PREFIX", "amlas"))+"/model-weight-acquisition-"
+  assert name in {prefix+suffix for suffix in ("image-uri","source-commit","admission-digest")}
+  assert args[args.index("--region")+1] == "us-east-1"
+  mode=os.environ.get("TEST_MODEL_RELEASE_FAILURE", "")
+  if mode == "captured_missing_cli":
+   sys.stderr.write("\\naws: [ERROR]: An error occurred (ParameterNotFound) when calling the GetParameter operation:\\n");sys.exit(254)
+  if mode == "denied_mentions_missing":
+   print("An error occurred (AccessDeniedException) when calling the GetParameter operation: access to ParameterNotFound is denied",file=sys.stderr);sys.exit(254)
+  if mode == "denied":
+   print("AccessDeniedException",file=sys.stderr);sys.exit(254)
+  values=json.loads(os.environ.get("TEST_MODEL_RELEASE_VALUES", "{}"))
+  if name not in values:
+   print("An error occurred (ParameterNotFound) when calling the GetParameter operation: selected parameter absent",file=sys.stderr);sys.exit(254)
+  if mode in ("nonfinite_json", "overflow_float_json"):
+   print('{"Parameter":{"Name":'+json.dumps(name)+',"Value":'+json.dumps(values[name])+',"Version":'+("NaN" if mode=="nonfinite_json" else "1e10000")+'}}');sys.exit(0)
+  if mode in ("duplicate_name", "duplicate_value"):
+   pairs = '"Name":"/foreign/unrelated","Name":'+json.dumps(name)+',"Value":'+json.dumps(values[name]) if mode=="duplicate_name" else '"Name":'+json.dumps(name)+',"Value":"unverified","Value":'+json.dumps(values[name])
+   print('{"Parameter":{'+pairs+'}}');sys.exit(0)
+  print(json.dumps({"Parameter":{"Name":"/foreign/unrelated" if mode=="foreign" else name,"Value":values[name]}}));sys.exit(0)
  if args[:1] == ["--version"]: print("aws fixture"); sys.exit(0)
  if args[:3] == ["configure", "get", "region"]: print("us-east-1"); sys.exit(0)
  if args[:2] == ["iam", "get-role"]: print("NoSuchEntity",file=sys.stderr);sys.exit(254)

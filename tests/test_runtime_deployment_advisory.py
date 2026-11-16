@@ -82,6 +82,31 @@ def request():
     print("CLI shorthand cannot encode the comma-containing environment value",file=sys.stderr);sys.exit(252)
    result["environmentVariables"] = dict(pair.split("=",1) for pair in pairs)
  return result
+if operation == ("ssm","get-parameter") and "/model-weight-acquisition-" in args[args.index("--name")+1]:
+ name=args[args.index("--name")+1]
+ prefix=os.environ.get("AMLAS_SSM_PREFIX", "/"+os.environ.get("AMLAS_DEPLOYMENT_PREFIX", "amlas"))+"/model-weight-acquisition-"
+ assert name in {prefix+suffix for suffix in ("image-uri","source-commit","admission-digest")}
+ assert args[args.index("--region")+1] == region
+ mode=os.environ.get("TEST_MODEL_RELEASE_FAILURE", "")
+ if mode == "captured_missing_cli":
+  sys.stderr.write("\naws: [ERROR]: An error occurred (ParameterNotFound) when calling the GetParameter operation:\n");sys.exit(254)
+ if mode == "denied_mentions_missing":
+  print("An error occurred (AccessDeniedException) when calling the GetParameter operation: access to ParameterNotFound is denied",file=sys.stderr);sys.exit(254)
+ if mode == "denied":
+  print("AccessDeniedException",file=sys.stderr);sys.exit(254)
+ values=json.loads(os.environ.get("TEST_MODEL_RELEASE_VALUES", "{}"))
+ if name not in values:
+  print("An error occurred (ParameterNotFound) when calling the GetParameter operation: selected parameter absent",file=sys.stderr);sys.exit(254)
+ if mode in ("nonfinite_json", "overflow_float_json"):
+  print('{"Parameter":{"Name":'+json.dumps(name)+',"Value":'+json.dumps(values[name])+',"Version":'+("NaN" if mode=="nonfinite_json" else "1e10000")+'}}');sys.exit(0)
+ if mode in ("duplicate_name", "duplicate_value"):
+  pairs = '"Name":"/foreign/unrelated","Name":'+json.dumps(name)+',"Value":'+json.dumps(values[name]) if mode=="duplicate_name" else '"Name":'+json.dumps(name)+',"Value":"unverified","Value":'+json.dumps(values[name])
+  print('{"Parameter":{'+pairs+'}}');sys.exit(0)
+ emit({"Parameter":{"Name":"/foreign/unrelated" if mode=="foreign" else name,"Value":values[name]}})
+# Native GetParameter contract: these newly registered selectors are absent by default.
+if operation == ("ssm","get-parameter") and "/data-preparation-" in args[args.index("--name")+1]:
+ assert args[args.index("--name")+1].startswith(os.environ.get("AMLAS_SSM_PREFIX", "/"+os.environ.get("AMLAS_DEPLOYMENT_PREFIX", "amlas"))+"/data-preparation-")
+ print("ParameterNotFound",file=sys.stderr);sys.exit(254)
 if operation == ("configure","get"): emit(region)
 if operation == ("sts","get-caller-identity"): emit(account)
 # CloudFormation CreateStack/Wait contracts: https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_CreateStack.html
@@ -101,6 +126,13 @@ if operation == ("iam","get-role") and role_name == bootstrap_name:
  result={"Role":{"Arn":bootstrap_arn if route_failure != "bootstrap-account" else f"arn:aws:iam::{'0'*12}:role/{bootstrap_name}","AssumeRolePolicyDocument":trust}}
  if route_failure == "bootstrap-boundary": result["Role"]["PermissionsBoundary"]={"PermissionsBoundaryArn":f"arn:aws:iam::{account}:policy/restricted"}
  emit(result)
+sm_role = os.environ.get("SAGEMAKER_EXECUTION_ROLE_ARN") or os.environ.get("AMLAS_SAGEMAKER_ROLE_ARN") or f"arn:aws:iam::{account}:role/{prefix}-sagemaker-exec"
+if operation == ("iam","get-role") and role_name == sm_role.rsplit("/",1)[-1]:
+ sm_failure=os.environ.get("TEST_SM_ROLE_FAILURE","")
+ if sm_failure == "denied": denied()
+ trust={"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"sagemaker.amazonaws.com"},"Action":"sts:AssumeRole"}]}
+ if sm_failure == "trust": trust["Statement"][0]["Principal"]["Service"]="lambda.amazonaws.com"
+ emit({"Role":{"Arn":sm_role if sm_failure != "foreign" else sm_role.replace(account,"0"*12),"AssumeRolePolicyDocument":trust}})
 if operation == ("cloudformation","describe-stacks"):
  selected=args[args.index("--stack-name")+1]
  if selected not in (stack_name,stack_arn):
@@ -368,3 +400,63 @@ def test_success_pins_platform_mmds_and_default_endpoint(
 def test_shared_iam_policy_temp_files_are_removed() -> None:
     source = (ROOT / "scripts/lib/deploy_agentcore_runtime.sh").read_text()
     assert "/tmp/p5_" not in source
+
+
+IMAGE_DIGEST = "sha256:" + "ab" * 32
+
+
+def _deployed_image(workspace: tuple[Path, dict[str, str], Path]) -> str:
+    state = json.loads(Path(workspace[1]["TEST_STATE"]).read_text())
+    return state["agentRuntimeArtifact"]["containerConfiguration"]["containerUri"].rsplit("/", 1)[1]
+
+
+def test_runtime_image_is_named_by_tag_when_no_digest_is_given(
+    runtime_workspace: tuple[Path, dict[str, str], Path],
+) -> None:
+    result = run_runtime(runtime_workspace)
+    assert result.returncode == 0, result.stdout + result.stderr
+    image = _deployed_image(runtime_workspace)
+    assert "-runtime:" in image and "@" not in image
+
+
+def test_given_image_digest_pins_the_runtime_image(
+    runtime_workspace: tuple[Path, dict[str, str], Path],
+) -> None:
+    runtime_workspace[1]["IMAGE_DIGEST"] = IMAGE_DIGEST
+    result = run_runtime(runtime_workspace)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert _deployed_image(runtime_workspace).endswith("-runtime@" + IMAGE_DIGEST)
+    assert "@" + IMAGE_DIGEST in result.stdout
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "v1",
+        "sha256:abc",
+        "sha256:" + "AB" * 32,
+        "sha512:" + "ab" * 32,
+        IMAGE_DIGEST + "0",
+        " " + IMAGE_DIGEST,
+    ],
+)
+def test_malformed_image_digest_changes_no_runtime_resource(
+    runtime_workspace: tuple[Path, dict[str, str], Path], value: str
+) -> None:
+    runtime_workspace[1]["IMAGE_DIGEST"] = value
+    result = run_runtime(runtime_workspace)
+    assert result.returncode != 0
+    assert "IMAGE_DIGEST" in result.stdout + result.stderr
+    writes = {
+        "create-agent-runtime",
+        "update-agent-runtime",
+        "create-role",
+        "put-role-policy",
+        "update-assume-role-policy",
+        "create-stack",
+        "update-stack",
+    }
+    assert not any(
+        len(call["args"]) > 1 and call["args"][1] in writes and "--generate-cli-skeleton" not in call["args"]
+        for call in runtime_calls(runtime_workspace)
+    )

@@ -75,6 +75,22 @@ class JobHandle:
     extra: dict[str, Any] = field(default_factory=dict)
 
 
+# A definite native rejection for a capacity limit (SageMaker ResourceLimitExceeded): the single create made no job,
+# so the same request can be created once capacity frees up. Adapters record the native code of every definite
+# rejection as ``extra["rejection_code"]``; only this code makes a cached rejection something a store submits again.
+CAPACITY_REJECTION_CODE = "ResourceLimitExceeded"
+
+
+def is_capacity_rejection(handle: Any) -> bool:
+    """True only for an original handle whose single create was definitely rejected for a capacity limit."""
+    if type(handle) is not JobHandle or type(handle.extra) is not dict:
+        return False
+    return (
+        handle.extra.get("submission_state") == "rejected"
+        and handle.extra.get("rejection_code") == CAPACITY_REJECTION_CODE
+    )
+
+
 @dataclass(frozen=True)
 class JobStatus:
     """The resolved state of a job plus an optional human-readable detail."""
@@ -109,6 +125,31 @@ class DatasetRef:
     rows: int = 0
     schema: dict[str, str] = field(default_factory=dict)
     lineage: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class DatasetArtifactRef:
+    """Exact-version bytes verified by acquisition; no deserialization authority."""
+
+    uri: str
+    version_id: str
+    sha256: str
+    byte_count: int
+    format: str
+
+
+@dataclass(frozen=True)
+class DatasetInspectionSource:
+    """Private immutable acquisition snapshot; never supplied as model JSON."""
+
+    artifact_ref: DatasetArtifactRef
+    account_id: str
+    region: str
+    bucket: str
+    runtime_session_id: str
+    deployment_id: str
+    deployment_prefix: str
+    acquisition_job_arn: str
 
 
 @dataclass(frozen=True)
@@ -382,3 +423,14 @@ class Verdict:
     allowed: bool
     reason: str = ""
     detail: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class VerifiedPreparationSource:
+    inspection_source: DatasetInspectionSource
+    manifest_refs: tuple[tuple[str, str, str, str], ...]
+    repo_id: str
+    revision: str
+    filename: str
+    acquisition_image_uri: str
+    acquisition_source_commit: str

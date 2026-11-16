@@ -367,12 +367,99 @@ configure_deployment_namespace() {
   DEFAULT_AGENTCORE_RUNTIME_NAME="${prefix//-/_}"
   AMLAS_AGENTCORE_SSM_PARAM="$ssm_prefix/agentcore-runtime-arn"
   AMLAS_SESSION_BUCKET_SSM_PARAM="$ssm_prefix/session-bucket"
+  AMLAS_SAGEMAKER_ROLE_SSM_PARAM="$ssm_prefix/sagemaker-execution-role-arn"
+  AMLAS_DATA_ACQUISITION_IMAGE_SSM_PARAM="$ssm_prefix/data-acquisition-image-uri"
+  AMLAS_DATA_ACQUISITION_SOURCE_SSM_PARAM="$ssm_prefix/data-acquisition-source-commit"
+  AMLAS_DATA_INSPECTION_IMAGE_SSM_PARAM="$ssm_prefix/data-inspection-image-uri"
+  AMLAS_DATA_INSPECTION_SOURCE_SSM_PARAM="$ssm_prefix/data-inspection-source-commit"
+  AMLAS_DATA_INSPECTION_ADMISSION_SSM_PARAM="$ssm_prefix/data-inspection-admission-digest"
   if [ "$prefix" != "amlas" ]; then
     case "${TAVILY_SECRET_ID:-}" in ""|amlas/tavily-api-key) export TAVILY_SECRET_ID="$DEFAULT_TAVILY_SECRET_ID" ;; esac
     case "${AMLAS_MODEL_PACKAGE_GROUP:-}" in ""|amlas-models) export AMLAS_MODEL_PACKAGE_GROUP="$prefix-models" ;; esac
     case "${AMLAS_FEATURE_STORE_DB:-}" in ""|amlas_features) export AMLAS_FEATURE_STORE_DB="${prefix//-/_}_features" ;; esac
   fi
   export AMLAS_JOBS_TABLE="${AMLAS_JOBS_TABLE:-$prefix-training-jobs}"
+}
+
+validate_managed_data_image_pair() {
+  local account="$1" region="$2" image="${3:-}" source="${4:-}"
+  RELEASE_ACCOUNT="$account" RELEASE_REGION="$region" RELEASE_IMAGE="$image" RELEASE_SOURCE="$source" \
+    python3 - <<'MANAGED_DATA_CONFIG'
+import os, re, sys
+account, region = os.environ["RELEASE_ACCOUNT"], os.environ["RELEASE_REGION"]
+image, source = os.environ["RELEASE_IMAGE"], os.environ["RELEASE_SOURCE"]
+if not image and not source:
+    sys.exit(0)
+pattern = re.escape(account + ".dkr.ecr." + region + ".amazonaws.com")
+if region.startswith("cn-"):
+    pattern += r"\.cn"
+pattern += r"/[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}"
+if not re.fullmatch(pattern, image) or not re.fullmatch(r"[a-f0-9]{40}", source):
+    sys.exit("Managed data image/source must be a same-account, same-region immutable pair.")
+MANAGED_DATA_CONFIG
+}
+
+validate_acquisition_release_config() {
+  case "${DATA_ACQUISITION_BACKEND:-processing}" in
+    processing|local|auto) ;;
+    *) die "Unsupported acquisition backend selector." ;;
+  esac
+  validate_managed_data_image_pair "$@"
+}
+
+validate_inspection_release_config() {
+  local account="$1" region="$2" image="${3:-}" source="${4:-}" admission="${5:-}"
+  validate_managed_data_image_pair "$account" "$region" "$image" "$source" || return $?
+  if [ -n "$admission" ]; then
+    [ -n "$image" ] && [ "$admission" = "${image##*@sha256:}" ] \
+      || die "Inspection admission marker must match the configured immutable image digest."
+  fi
+}
+
+# Bootstrap may configure an unadmitted guest, but ordinary discovery publication
+# must not pair new image/source selectors with a marker retained from a prior run.
+validate_inspection_publication_config() {
+  validate_inspection_release_config "$@" || return $?
+  if [ -n "${3:-}" ] && [ -z "${5:-}" ]; then
+    die "Inspection discovery publication requires a supplied matching native admission marker."
+  fi
+}
+
+validate_selected_sagemaker_role_arn() {
+  local role="$1" account="$2"
+  [[ "$account" =~ ^[0-9]{12}$ ]] || die "Target AWS account must contain 12 digits."
+  [[ "$role" =~ ^arn:aws(-us-gov|-cn)?:iam::${account}:role/[A-Za-z0-9+=,.@_/-]+$ ]] \
+    || die "Selected SageMaker role must be a valid role ARN in the target account."
+}
+
+verify_selected_sagemaker_role() {
+  local role="$1" account="$2" document
+  validate_selected_sagemaker_role_arn "$role" "$account"
+  document="$(aws iam get-role --role-name "${role##*/}" --output json)" \
+    || die "Selected SageMaker execution role metadata could not be read; no runtime resources were changed."
+  SELECTED_ROLE_DOCUMENT="$document" EXPECTED_ROLE_ARN="$role" python3 - <<'SAGEMAKER_ROLE'
+import json, os, sys
+try:
+    role = json.loads(os.environ["SELECTED_ROLE_DOCUMENT"])["Role"]
+    if role["Arn"] != os.environ["EXPECTED_ROLE_ARN"]:
+        raise ValueError("identity")
+    statements = role["AssumeRolePolicyDocument"]["Statement"]
+    if isinstance(statements, dict):
+        statements = [statements]
+    def values(value):
+        return value if isinstance(value, list) else [value]
+    compatible = any(
+        isinstance(item, dict) and item.get("Effect") == "Allow"
+        and "sts:AssumeRole" in values(item.get("Action"))
+        and isinstance(item.get("Principal"), dict)
+        and "sagemaker.amazonaws.com" in values(item["Principal"].get("Service"))
+        for item in statements
+    )
+    if not compatible:
+        raise ValueError("trust")
+except (KeyError, TypeError, ValueError):
+    sys.exit("Selected SageMaker role identity or service trust is incompatible.")
+SAGEMAKER_ROLE
 }
 
 deployment_stack_name() {
@@ -742,4 +829,42 @@ append_runtime_role_reuse_args() {
     [ -n "${REUSED_RUNTIME_ROLE_ARN:-}" ] && [ -n "${REUSED_RUNTIME_ROLE_ID:-}" ] || die "Runtime role reuse witness is incomplete."
     MANIFEST_INIT_ARGS+=(--reused-role-arn "$REUSED_RUNTIME_ROLE_ARN" --reused-role-id "$REUSED_RUNTIME_ROLE_ID")
   fi
+}
+
+resolve_preparation_release_config() {
+  local selected line
+  selected="$(python3 "$(dirname "${BASH_SOURCE[0]}")/preparation_release_config.py" --account "$1" --region "$2" --prefix "$3")" || return $?
+  while IFS= read -r line; do
+    [ -z "$line" ] || export "$line"
+  done <<< "$selected"
+}
+
+# Publish the verified preparation selection: none, the resource triple, or all
+# seven. The four exclusions parameters are written only when they were selected;
+# SSM cannot store an empty value, and the triple alone is a complete selection.
+publish_preparation_selection() {
+  local key name
+  if [ -z "${AMLAS_DATA_PREPARATION_IMAGE_URI:-}" ]; then
+    [ -z "${AMLAS_DATA_PREPARATION_SOURCE_COMMIT:-}${AMLAS_DATA_PREPARATION_ADMISSION_DIGEST:-}${AMLAS_DATA_PREPARATION_EXCLUSIONS_URI:-}${AMLAS_DATA_PREPARATION_EXCLUSIONS_VERSION_ID:-}${AMLAS_DATA_PREPARATION_EXCLUSIONS_SHA256:-}${AMLAS_DATA_PREPARATION_EXCLUSIONS_BYTE_COUNT:-}" ] \
+      || die "Verified runtime returned a partial preparation tuple; SSM was not updated."
+    return 0
+  fi
+  python3 "$(dirname "${BASH_SOURCE[0]}")/preparation_release_config.py" --account "$AMLAS_AWS_ACCOUNT_ID" \
+    --region "$AWS_REGION" --prefix "$AMLAS_SSM_PREFIX" --env-only >/dev/null \
+    || die "Verified runtime did not return an admitted preparation tuple; SSM was not updated."
+  for key in AMLAS_DATA_PREPARATION_IMAGE_URI AMLAS_DATA_PREPARATION_SOURCE_COMMIT AMLAS_DATA_PREPARATION_ADMISSION_DIGEST \
+    AMLAS_DATA_PREPARATION_EXCLUSIONS_URI AMLAS_DATA_PREPARATION_EXCLUSIONS_VERSION_ID \
+    AMLAS_DATA_PREPARATION_EXCLUSIONS_SHA256 AMLAS_DATA_PREPARATION_EXCLUSIONS_BYTE_COUNT; do
+    [ -n "${!key:-}" ] || continue
+    name="$(printf '%s' "${key#AMLAS_}" | tr 'A-Z_' 'a-z-')"
+    publish_owned_parameter "$AMLAS_SSM_PREFIX/$name" "${!key}"
+  done
+}
+
+resolve_model_acquisition_release_config() {
+  local selected line
+  selected="$(python3 "$(dirname "${BASH_SOURCE[0]}")/model_acquisition_release_config.py" --account "$1" --region "$2" --prefix "$3")" || return $?
+  while IFS= read -r line; do
+    [ -z "$line" ] || export "$line"
+  done <<< "$selected"
 }

@@ -18,7 +18,7 @@ OSS-4b P3: the canonical env names are ``AMLAS_GUARDRAIL_*``; the legacy
       fresh checkout build byte-for-byte as before.
     * ``AMLAS_GUARDRAIL_VERSION``  — the guardrail version (default ``DRAFT``).
     * ``AMLAS_GUARDRAIL_ENABLED``  — explicit opt-out seam (default ``true``); set ``false``
-      to disable in-band binding even when an id is present.
+      to disable guardrail checks and in-band binding even when an id is present.
     * ``AMLAS_GUARDRAIL_TRACE``    — trace mode (default ``enabled`` so interventions are
       observable in traces).
 
@@ -49,12 +49,30 @@ def _truthy(value: str | None, *, default: bool) -> bool:
     return value.strip().lower() in ("1", "true", "yes", "on")
 
 
+def guardrail_checks_enabled() -> bool:
+    """Whether checks are enabled, independently of a provisioned guardrail id."""
+    return _truthy(env_with_compat("AMLAS_GUARDRAIL_ENABLED"), default=True)
+
+
+def disabled_guardrail_result(*, backend: str | None = None) -> dict[str, Any]:
+    """Report that no guardrail check ran, without claiming a safety pass."""
+    result: dict[str, Any] = {
+        "action": "DISABLED",
+        "enabled": False,
+        "passed": False,
+        "violations": [],
+    }
+    if backend is not None:
+        result["backend"] = backend
+    return result
+
+
 def guardrail_enabled() -> bool:
     """True when an in-band guardrail should be bound (id present AND not disabled)."""
     gid = (env_with_compat("AMLAS_GUARDRAIL_ID", "") or "").strip()
     if not gid:
         return False
-    return _truthy(env_with_compat("AMLAS_GUARDRAIL_ENABLED"), default=True)
+    return guardrail_checks_enabled()
 
 
 def guardrail_model_kwargs() -> dict[str, Any]:

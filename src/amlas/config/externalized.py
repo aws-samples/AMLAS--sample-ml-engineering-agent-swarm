@@ -29,7 +29,8 @@ and the SSM-published lake/registry/session outputs.
 from __future__ import annotations
 
 import os
-from collections.abc import Callable
+import re
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 from .aws_region import AWS_REGION_ENV_KEYS, resolve_aws_region
@@ -113,9 +114,7 @@ def _default_ssm_getter(key: str, region: str, client: object | None = None) -> 
             client = boto3.client(
                 "ssm",
                 region_name=resolve_aws_region(region),
-                config=Config(
-                    connect_timeout=2, read_timeout=3, retries={"max_attempts": 1}
-                ),
+                config=Config(connect_timeout=2, read_timeout=3, retries={"max_attempts": 1}),
             )
         resp = client.get_parameter(Name=key)  # type: ignore[union-attr]
         return str(resp["Parameter"]["Value"])
@@ -196,6 +195,132 @@ CONFIG_KEYS: dict[str, ConfigKey] = {
         description="Athena workgroup for feature-store point-in-time queries.",
     ),
     # ── Runtime / dispatch ───────────────────────────────────────────────────
+    "coding_case_freeze_image_uri": ConfigKey(
+        env=("AMLAS_CODING_CASE_FREEZE_IMAGE_URI",),
+        ssm=f"{SSM_NAMESPACE}/coding-case-freeze-image-uri",
+        default="",
+        description="Immutable selected managed case-freeze image; no default.",
+    ),
+    "coding_case_freeze_source_commit": ConfigKey(
+        env=("AMLAS_CODING_CASE_FREEZE_SOURCE_COMMIT",),
+        ssm=f"{SSM_NAMESPACE}/coding-case-freeze-source-commit",
+        default="",
+        description="Published fixed case-freeze source commit; no default.",
+    ),
+    "coding_case_freeze_admission_digest": ConfigKey(
+        env=("AMLAS_CODING_CASE_FREEZE_ADMISSION_DIGEST",),
+        ssm=f"{SSM_NAMESPACE}/coding-case-freeze-admission-digest",
+        default="",
+        description="Trusted exact-image case-freeze qualification digest; no default.",
+    ),
+    "qwen_sft_image_uri": ConfigKey(
+        env=("AMLAS_QWEN_SFT_IMAGE_URI",),
+        ssm=f"{SSM_NAMESPACE}/qwen-sft-image-uri",
+        default="",
+        description="Immutable selected fixed managed Qwen SFT image; no admission default.",
+    ),
+    "qwen_sft_source_commit": ConfigKey(
+        env=("AMLAS_QWEN_SFT_SOURCE_COMMIT",),
+        ssm=f"{SSM_NAMESPACE}/qwen-sft-source-commit",
+        default="",
+        description="Published fixed Qwen SFT source commit; no default.",
+    ),
+    "qwen_sft_admission_digest": ConfigKey(
+        env=("AMLAS_QWEN_SFT_ADMISSION_DIGEST",),
+        ssm=f"{SSM_NAMESPACE}/qwen-sft-admission-digest",
+        default="",
+        description="Trusted exact-image native Qwen SFT admission digest; no default.",
+    ),
+    "data_preparation_image_uri": ConfigKey(
+        env=("AMLAS_DATA_PREPARATION_IMAGE_URI",),
+        ssm=f"{SSM_NAMESPACE}/data-preparation-image-uri",
+        default="",
+        description="Immutable selected managed canonical-preparation image.",
+    ),
+    "data_preparation_source_commit": ConfigKey(
+        env=("AMLAS_DATA_PREPARATION_SOURCE_COMMIT",),
+        ssm=f"{SSM_NAMESPACE}/data-preparation-source-commit",
+        default="",
+        description="Published preparation source commit.",
+    ),
+    "data_preparation_admission_digest": ConfigKey(
+        env=("AMLAS_DATA_PREPARATION_ADMISSION_DIGEST",),
+        ssm=f"{SSM_NAMESPACE}/data-preparation-admission-digest",
+        default="",
+        description="Trusted exact-image native admission digest; no default.",
+    ),
+    "data_preparation_exclusions_uri": ConfigKey(
+        env=("AMLAS_DATA_PREPARATION_EXCLUSIONS_URI",),
+        ssm=f"{SSM_NAMESPACE}/data-preparation-exclusions-uri",
+        default="",
+        description="Selected exclusions S3 object; version/hash bound.",
+    ),
+    "data_preparation_exclusions_version_id": ConfigKey(
+        env=("AMLAS_DATA_PREPARATION_EXCLUSIONS_VERSION_ID",),
+        ssm=f"{SSM_NAMESPACE}/data-preparation-exclusions-version-id",
+        default="",
+        description="Exact non-null exclusions S3 VersionId.",
+    ),
+    "data_preparation_exclusions_sha256": ConfigKey(
+        env=("AMLAS_DATA_PREPARATION_EXCLUSIONS_SHA256",),
+        ssm=f"{SSM_NAMESPACE}/data-preparation-exclusions-sha256",
+        default="",
+        description="Independently verified exclusions bytes SHA256.",
+    ),
+    "data_preparation_exclusions_byte_count": ConfigKey(
+        env=("AMLAS_DATA_PREPARATION_EXCLUSIONS_BYTE_COUNT",),
+        ssm=f"{SSM_NAMESPACE}/data-preparation-exclusions-byte-count",
+        default="",
+        description="Exact bounded exclusions byte count.",
+    ),
+    "model_weight_acquisition_image_uri": ConfigKey(
+        env=("AMLAS_MODEL_WEIGHT_ACQUISITION_IMAGE_URI",),
+        ssm=f"{SSM_NAMESPACE}/model-weight-acquisition-image-uri",
+        default="",
+        description="Selected fixed model acquisition image uri; no default or admission inference.",
+    ),
+    "model_weight_acquisition_source_commit": ConfigKey(
+        env=("AMLAS_MODEL_WEIGHT_ACQUISITION_SOURCE_COMMIT",),
+        ssm=f"{SSM_NAMESPACE}/model-weight-acquisition-source-commit",
+        default="",
+        description="Selected fixed model acquisition source commit; no default or admission inference.",
+    ),
+    "model_weight_acquisition_admission_digest": ConfigKey(
+        env=("AMLAS_MODEL_WEIGHT_ACQUISITION_ADMISSION_DIGEST",),
+        ssm=f"{SSM_NAMESPACE}/model-weight-acquisition-admission-digest",
+        default="",
+        description="Selected fixed model acquisition admission digest; no default or admission inference.",
+    ),
+    "data_acquisition_image_uri": ConfigKey(
+        env=("AMLAS_DATA_ACQUISITION_IMAGE_URI",),
+        ssm=f"{SSM_NAMESPACE}/data-acquisition-image-uri",
+        default="",
+        description="Digest-pinned ECR image for managed dataset acquisition.",
+    ),
+    "data_acquisition_source_commit": ConfigKey(
+        env=("AMLAS_DATA_ACQUISITION_SOURCE_COMMIT",),
+        ssm=f"{SSM_NAMESPACE}/data-acquisition-source-commit",
+        default="",
+        description="Source commit verified when publishing the acquisition image.",
+    ),
+    "data_inspection_image_uri": ConfigKey(
+        env=("AMLAS_DATA_INSPECTION_IMAGE_URI",),
+        ssm=f"{SSM_NAMESPACE}/data-inspection-image-uri",
+        default="",
+        description="Digest-pinned AMD64 image for fixed isolated inspection.",
+    ),
+    "data_inspection_source_commit": ConfigKey(
+        env=("AMLAS_DATA_INSPECTION_SOURCE_COMMIT",),
+        ssm=f"{SSM_NAMESPACE}/data-inspection-source-commit",
+        default="",
+        description="Published source commit compiled into the inspection image.",
+    ),
+    "data_inspection_admission_digest": ConfigKey(
+        env=("AMLAS_DATA_INSPECTION_ADMISSION_DIGEST",),
+        ssm=f"{SSM_NAMESPACE}/data-inspection-admission-digest",
+        default="",
+        description="Image digest admitted after exact-image native credential/egress probes.",
+    ),
     "sagemaker_execution_role_arn": ConfigKey(
         env=("SAGEMAKER_EXECUTION_ROLE_ARN", "AMLAS_SAGEMAKER_ROLE_ARN"),
         ssm=f"{SSM_NAMESPACE}/sagemaker-execution-role-arn",
@@ -344,3 +469,56 @@ def resolve_all(*, ssm_getter: SsmGetter | None = None) -> dict[str, str]:
             continue
         out[name] = resolve(name, region=region, ssm_getter=ssm_getter)
     return out
+
+
+def resolve_env_snapshot(key: str, *, env: Mapping[str, str] | None = None) -> str:
+    """Read explicit startup ENV/overlay only, never SSM/profile/default resources."""
+    source = os.environ if env is None else env
+    for name in CONFIG_KEYS[key].env:
+        value = source.get(name, "").strip()
+        if value and not _is_placeholder(value):
+            return value
+    return ""
+
+
+def model_weight_acquisition_selectors(*, env: Mapping[str, str] | None = None) -> dict[str, object]:
+    """Pure startup snapshot; configured selectors never establish native admission."""
+    selected = os.environ if env is None else env
+    names = (
+        "AMLAS_MODEL_WEIGHT_ACQUISITION_IMAGE_URI",
+        "AMLAS_MODEL_WEIGHT_ACQUISITION_SOURCE_COMMIT",
+        "AMLAS_MODEL_WEIGHT_ACQUISITION_ADMISSION_DIGEST",
+    )
+    values = tuple(selected.get(name, "") for name in names)
+    if any(type(value) is not str for value in values):
+        raise ValueError("model acquisition startup selector type differs")
+    values = tuple(value.strip() for value in values)
+    if not any(values):
+        return {"state": "unconfigured", "native_admitted": False}
+    if not all(values):
+        raise ValueError("model acquisition startup selector tuple is incomplete")
+    image, source, marker = values
+    matched = re.fullmatch(
+        r"([0-9]{12})\.dkr\.ecr\.([a-z0-9-]+)\.amazonaws\.com/[a-z0-9][a-z0-9._/-]*@sha256:([a-f0-9]{64})",
+        image,
+    )
+    account = selected.get("AMLAS_AWS_ACCOUNT_ID", selected.get("AWS_ACCOUNT_ID", ""))
+    region = next((selected.get(name, "") for name in AWS_REGION_ENV_KEYS if selected.get(name, "")), "")
+    if (
+        not matched
+        or not re.fullmatch(r"[a-f0-9]{40}", source)
+        or not re.fullmatch(r"[a-f0-9]{64}", marker)
+        or marker != matched[3]
+        or not re.fullmatch(r"[0-9]{12}", account)
+        or account == "0" * 12
+        or matched[1] != account
+        or matched[2] != region
+    ):
+        raise ValueError("model acquisition startup selector binding differs")
+    return {
+        "state": "unadmitted",
+        "native_admitted": False,
+        "image_uri": image,
+        "source_commit": source,
+        "admission_digest": marker,
+    }

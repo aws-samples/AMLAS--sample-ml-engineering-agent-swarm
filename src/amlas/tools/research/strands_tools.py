@@ -18,7 +18,7 @@ from ...cloud.secrets import _is_placeholder
 from ...errors import tool_error_boundary
 from .aggregator import AggregateReport, merged_to_dict, research_aggregate
 from .arxiv import arxiv_search
-from .public_fetch import fetch_public_urls
+from .public_fetch import _bounded_tool_projection, fetch_public_urls
 from .semantic_scholar import semantic_scholar_search
 from .tavily import tavily_search
 
@@ -95,7 +95,7 @@ def research_search(query: str, max_results: int = 5, urls: list[str] | None = N
         )
     except Exception:  # never let instrumentation break a research call  # nosec B110
         pass
-    return out
+    return _bounded_tool_projection(out)
 
 
 @tool

@@ -211,7 +211,7 @@ def remote_fetch_enabled() -> bool:
 
 def _parse_s3(uri: str) -> tuple[str, str]:
     """Split ``s3://bucket/key/parts`` → ``("bucket", "key/parts")`` (key may be "")."""
-    rest = uri[len("s3://"):] if uri.lower().startswith("s3://") else uri
+    rest = uri[len("s3://") :] if uri.lower().startswith("s3://") else uri
     if "/" in rest:
         bucket, key = rest.split("/", 1)
     else:
@@ -288,9 +288,7 @@ def _guard_http(url: str) -> None:
 # ─── Public: resolve_ref ─────────────────────────────────────────────────────
 
 
-def resolve_ref(
-    path: str, *, allow_remote: bool = True, sandbox_local: bool = True
-) -> ResolvedRef:
+def resolve_ref(path: str, *, allow_remote: bool = True, sandbox_local: bool = True) -> ResolvedRef:
     """Classify + validate ``path`` into a :class:`ResolvedRef` (or raise).
 
     LOCAL → sandbox containment (raises :class:`PathRefError` on escape).
@@ -311,9 +309,7 @@ def resolve_ref(
         if not sandbox_local:
             # Explicit user-provided local path: resolve WITHOUT containment.
             real = _resolve_local(path)
-            return ResolvedRef(
-                raw=path, scheme=PathScheme.LOCAL, location=str(real), is_remote=False
-            )
+            return ResolvedRef(raw=path, scheme=PathScheme.LOCAL, location=str(real), is_remote=False)
         try:
             real = _resolve_within_sandbox(path)
         except PermissionError as exc:
@@ -322,9 +318,7 @@ def resolve_ref(
 
     # Remote (S3/HTTP) — gated by the flag AND the caller's allow_remote.
     if not allow_remote or not remote_fetch_enabled():
-        raise PathRefError(
-            f"remote fetch disabled (set {_REMOTE_FETCH_ENV}=1 to enable): {path}"
-        )
+        raise PathRefError(f"remote fetch disabled (set {_REMOTE_FETCH_ENV}=1 to enable): {path}")
 
     if scheme is PathScheme.S3:
         bucket, key = _parse_s3(path)
@@ -397,9 +391,7 @@ def _s3_get_bytes(ref: ResolvedRef, max_bytes: int | None) -> bytes:
     if max_bytes is not None and max_bytes >= 0:
         if max_bytes == 0:
             return b""
-        resp = client.get_object(
-            Bucket=ref.bucket, Key=ref.key, Range=f"bytes=0-{max_bytes - 1}"
-        )
+        resp = client.get_object(Bucket=ref.bucket, Key=ref.key, Range=f"bytes=0-{max_bytes - 1}")
         # boto3's StreamingBody.read() is typed ``Any``; pin to ``bytes`` so the
         # declared return contract holds without an Any-return.
         data: bytes = resp["Body"].read()
@@ -407,9 +399,7 @@ def _s3_get_bytes(ref: ResolvedRef, max_bytes: int | None) -> bytes:
     resp = client.get_object(Bucket=ref.bucket, Key=ref.key)
     data = resp["Body"].read()
     if len(data) > REMOTE_MAX_BYTES:
-        raise PathRefError(
-            f"remote object exceeds size cap ({REMOTE_MAX_BYTES} bytes): {ref.raw}"
-        )
+        raise PathRefError(f"remote object exceeds size cap ({REMOTE_MAX_BYTES} bytes): {ref.raw}")
     return data
 
 
@@ -440,9 +430,7 @@ def _http_get_bytes(ref: ResolvedRef, max_bytes: int | None) -> bytes:
         ) as client:
             with client.stream("GET", ref.location) as response:
                 if response.is_redirect:  # nosemgrep
-                    raise PathRefError(
-                        f"HTTP redirect responses are not followed: {ref.raw}"
-                    )
+                    raise PathRefError(f"HTTP redirect responses are not followed: {ref.raw}")
                 response.raise_for_status()
                 for chunk in response.iter_bytes():
                     if not chunk:
@@ -455,8 +443,7 @@ def _http_get_bytes(ref: ResolvedRef, max_bytes: int | None) -> bytes:
                     else:
                         if len(content) + len(chunk) > REMOTE_MAX_BYTES:
                             raise PathRefError(
-                                "remote object exceeds size cap "
-                                f"({REMOTE_MAX_BYTES} bytes): {ref.raw}"
+                                f"remote object exceeds size cap ({REMOTE_MAX_BYTES} bytes): {ref.raw}"
                             )
                         content.extend(chunk)
     except PathRefError:
@@ -469,21 +456,122 @@ def _http_get_bytes(ref: ResolvedRef, max_bytes: int | None) -> bytes:
 # ─── Public: read_dataframe ────────────────────────────────────────────────────
 
 
-def read_dataframe(ref: ResolvedRef, **read_csv_kwargs: Any) -> pd.DataFrame:
-    """Load a CSV reference into a pandas DataFrame across local/S3/HTTP.
+class _JsonFrameBudget:
+    """Reject decoded objects and sparse-to-dense expansion before pandas runs."""
 
-    LOCAL → ``pd.read_csv(location)``. Remote → ``open_bytes`` → ``io.BytesIO`` →
-    ``pd.read_csv`` (the boto3 ``get_object`` path, so ``s3fs`` is NOT required).
+    def __init__(self) -> None:
+        self.rows = 0
+        self.decoded_bytes = 0
+        self.columns: set[str] = set()
+
+    def add(self, record: dict[str, Any]) -> None:
+        import itertools
+        import sys
+
+        for column in record:
+            self.columns.add(column)
+            if len(self.columns) > 1024:
+                raise PathRefError("JSON records exceed the 1024 columns materialization cap")
+        self.rows += 1
+        if self.rows > 250000:
+            raise PathRefError("JSON records exceed the bounded materialization row cap")
+        # Allow for two eight-byte cell buffers plus row-index storage. This is
+        # a conservative admission estimate, not a process RSS/isolation limit.
+        dense_bytes = self.rows * (len(self.columns) + 1) * 16
+        pending = [iter((record,))]
+        while pending:
+            try:
+                value = next(pending[-1])
+            except StopIteration:
+                pending.pop()
+                continue
+            self.decoded_bytes += sys.getsizeof(value)
+            if self.decoded_bytes + dense_bytes > REMOTE_MAX_BYTES:
+                raise PathRefError("JSON decoded data exceeds the bounded materialization cap")
+            if isinstance(value, dict):
+                pending.append(itertools.chain(value.keys(), value.values()))
+            elif isinstance(value, list):
+                pending.append(iter(value))
+
+
+def read_dataframe(ref: ResolvedRef, **read_csv_kwargs: Any) -> pd.DataFrame:
+    """Load CSV, Parquet, JSON or JSONL without pandas opening a remote URI.
+
+    Local paths use the existing path contract; remote inputs always pass through
+    ``open_bytes`` and retain its redirect denial and AWS credential selection.
+    New structured formats cap decoded materialization and JSONL record memory.
+    CSV keyword arguments keep their historical meaning.
     """
     import io
+    import json
 
     import pandas as pd
 
-    if ref.scheme is PathScheme.LOCAL:
-        return pd.read_csv(ref.location, **read_csv_kwargs)
+    suffix = Path(urlparse(ref.location).path).suffix.lower()
+    source: Any = ref.location if ref.scheme is PathScheme.LOCAL else io.BytesIO(open_bytes(ref))
+    if suffix == ".parquet":
+        import pyarrow as arrow
+        import pyarrow.parquet as parquet
 
-    data = open_bytes(ref)
-    return pd.read_csv(io.BytesIO(data), **read_csv_kwargs)
+        file = parquet.ParquetFile(
+            source,
+            thrift_string_size_limit=16 * 1024 * 1024,
+            thrift_container_size_limit=1000000,
+        )
+        decoded = sum(
+            file.metadata.row_group(index).total_byte_size for index in range(file.metadata.num_row_groups)
+        )
+        if decoded > REMOTE_MAX_BYTES:
+            raise PathRefError("Parquet decoded data exceeds the 512 MiB materialization cap")
+        batches = []
+        decoded = 0
+        rows = 0
+        for batch in file.iter_batches(batch_size=256):
+            decoded += batch.nbytes
+            if decoded > REMOTE_MAX_BYTES:
+                raise PathRefError("Parquet decoded batches exceed the 512 MiB materialization cap")
+            rows += batch.num_rows
+            if rows > 250000:
+                raise PathRefError("Parquet rows exceed the bounded materialization cap")
+            batches.append(batch)
+        return arrow.Table.from_batches(batches, schema=file.schema_arrow).to_pandas()
+    if suffix in (".json", ".jsonl", ".ndjson"):
+        # Bounded line reads reject one giant record before json.loads allocates it.
+        max_record = 8 * 1024 * 1024
+        frame_budget = _JsonFrameBudget()
+        stream = open(source, "rb") if isinstance(source, str) else source
+        try:
+            if suffix == ".json":
+                raw = stream.read(max_record + 1)
+                if len(raw) > max_record:
+                    raise PathRefError("JSON document exceeds the bounded record cap; use JSONL")
+                records = json.loads(raw)
+                if not isinstance(records, list) or any(not isinstance(record, dict) for record in records):
+                    raise PathRefError("JSON dataset must be an array of record objects")
+                for record in records:
+                    frame_budget.add(record)
+            else:
+                records = []
+                count = 0
+                while True:
+                    raw = stream.readline(max_record + 1)
+                    if not raw:
+                        break
+                    if len(raw) > max_record:
+                        raise PathRefError("JSONL record exceeds the 8 MiB record cap")
+                    count += len(raw)
+                    if count > REMOTE_MAX_BYTES or len(records) >= 250000:
+                        raise PathRefError("JSONL decoded data exceeds the bounded materialization cap")
+                    if raw.strip():
+                        record = json.loads(raw)
+                        if not isinstance(record, dict):
+                            raise PathRefError("JSONL dataset rows must be record objects")
+                        frame_budget.add(record)
+                        records.append(record)
+            return pd.DataFrame.from_records(records)
+        finally:
+            stream.close()
+    return pd.read_csv(source, **read_csv_kwargs)
 
 
 # ─── S3 prefix listing (for fs_tools list_directory / find_files) ──────────────

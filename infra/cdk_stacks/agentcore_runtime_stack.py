@@ -7,7 +7,7 @@ the runtime container image (`linux/arm64`) lives in IaC.
 Resources:
     - aws_ecr.Repository `amlas-runtime`
         - image_scan_on_push=True
-        - lifecycle rule: keep last 10 images (cost control)
+        - lifecycle rule: expire excess untagged images only (keep 10; preserve tagged images)
         - removal_policy=DESTROY + empty_on_delete=True so `cdk destroy` is clean
           (no image is pushed until Phase 6; we favor a clean teardown over RETAIN
           for this de-mock phase — see teardown doc).
@@ -59,7 +59,8 @@ class AgentCoreRuntimeStack(Stack):
             removal_policy=RemovalPolicy.DESTROY,
             lifecycle_rules=[
                 ecr.LifecycleRule(
-                    description="Keep only the last 10 images",
+                    description="Expire only untagged images; retain tagged runtime and worker images",
+                    tag_status=ecr.TagStatus.UNTAGGED,
                     max_image_count=10,
                     rule_priority=1,
                 )

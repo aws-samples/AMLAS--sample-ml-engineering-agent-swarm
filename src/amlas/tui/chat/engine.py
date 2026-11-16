@@ -11,6 +11,7 @@ Bedrock mode adds real LLM responses for natural-language queries.
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
 import os
@@ -43,9 +44,10 @@ from .commands import (
     parse_slash_command,
     validate_command_args,
 )
+from .guardrail_assessment import GuardrailAssessment
 from .intent_agent import IntentAgent
 from .models import ChatMessage, ChatResponse
-from .tool_binding_backend import ToolBindingBackend, render_agent_turn
+from .tool_binding_backend import GuardrailOutcome, ToolBindingBackend, render_agent_turn
 
 logger = logging.getLogger(__name__)
 
@@ -714,6 +716,7 @@ class ChatEngine:
         job_manager: JobManager | None = None,
         *,
         approval_policy: Any | None = None,
+        normal_restore=None,
     ) -> None:
         self.settings = settings or Settings.load()
         self.history: list[ChatMessage] = []
@@ -790,15 +793,289 @@ class ChatEngine:
         # the prior tests are unaffected. When real Strands + creds are present,
         # free-form NL reaches this agent for real function-calling (design §2 / §4).
         self.tool_backend = (
-            ToolBindingBackend(self.settings, approval_policy=approval_policy)
-            if approval_policy is not None else ToolBindingBackend(self.settings)
+            ToolBindingBackend(self.settings, approval_policy=approval_policy, normal_restore=normal_restore)
+            if normal_restore is not None
+            else (
+                ToolBindingBackend(self.settings, approval_policy=approval_policy)
+                if approval_policy is not None
+                else ToolBindingBackend(self.settings)
+            )
         )
+        if type(self.tool_backend) is ToolBindingBackend:
+            self.tool_backend._bind_warm_owner(self)
+            from .research_runtime_profile import _bind_runtime_research_profile
+
+            _bind_runtime_research_profile(self)
         if self.tool_backend.is_tool_capable:  # nosemgrep
             logger.info("Chat engine tool-binding ENABLED (embedded Strands agent)")
         else:
             # Announce the degradation instead of letting it be silent (task 6.3):
             # with tier 4 gone there is no second brain behind this, only tier 5.
             _warn_chat_llm_absent()
+
+    def assemble_normal_completion(self, task):
+        """Assemble one complete original batch from fresh native SFT proof."""
+        from ...control_plane.normal_run_checkpoint import (
+            _canonical,
+            _captured_snapshot_messages,
+            _original_training_complete,
+            _task_causal_prefix,
+        )
+        from ...control_plane.producer_snapshot import _approved_read
+
+        backend = self.tool_backend
+        _approved_read(backend.approval_policy)
+        observed = backend._normal_original_result
+        alias = "sft_" + task["operation_digest"][:32]
+        if (
+            observed.get("request_ref") != alias
+            or observed.get("job_name") != task["native_job_name"]
+            or observed.get("job_arn") != task["native_job_arn"]
+            or not _original_training_complete(observed)
+        ):
+            raise ValueError("fresh full original SFT completion required")
+        prefix = copy.deepcopy(_task_causal_prefix(task))
+        uses = [block["toolUse"] for block in prefix[-1]["content"] if "toolUse" in block]
+        if (
+            len(uses) != 1
+            or uses[0]["toolUseId"] != task["pending_tool_use_id"]
+            or uses[0]["name"] != "submit_qwen_sft"
+        ):
+            raise ValueError("whole original completion batch is not available")
+        event = {
+            "schema_version": 1,
+            "event_type": "original_sft_completed",
+            "data_only": True,
+            "request_ref": alias,
+            "tool_use_id": task["pending_tool_use_id"],
+            "status": "verified_completed",
+        }
+        content = [
+            {
+                "text": json.dumps(
+                    event, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
+                )
+            }
+        ]
+        result = {"toolUseId": task["pending_tool_use_id"], "status": "success", "content": content}
+        backend._admit_input(
+            json.dumps(result, ensure_ascii=False, allow_nan=False, separators=(",", ":")),
+            "TOOL_RESULT",
+            immutable=True,
+            tool_name=uses[0]["name"],
+        )
+        completed = [*prefix, {"role": "user", "content": [{"toolResult": result}]}]
+        for message in completed:
+            backend._admit_input(
+                json.dumps(message, ensure_ascii=False, allow_nan=False, separators=(",", ":")),
+                "HISTORY_TEXT",
+                immutable=True,
+            )
+        snapshot = copy.deepcopy(task["sdk_snapshot"])
+        if _canonical(_captured_snapshot_messages(snapshot)) != _canonical(prefix):
+            raise ValueError("original session snapshot prefix differs")
+        snapshot["data"]["messages"] = completed
+        _approved_read(backend.approval_policy)
+        return snapshot
+
+    def claim_normal_completion(self, context, task):
+        """Confirm first consume CAS before public load; never invoke here."""
+        from strands import Snapshot
+
+        backend = self.tool_backend
+        snapshot = self.assemble_normal_completion(task)
+        ready = {**task, "sdk_snapshot": snapshot}
+
+        def qualify_original():
+            context.qualify_original_completion(task, backend._sft_store, policy=backend.approval_policy)
+
+        token = context.claim_completion(
+            ready, policy=backend.approval_policy, qualify_original=qualify_original
+        )
+        context.qualify_completion(
+            token, policy=backend.approval_policy, qualify_original=qualify_original, sdk_snapshot=snapshot
+        )
+        for message in snapshot["data"]["messages"]:
+            backend._admit_input(
+                json.dumps(message, ensure_ascii=False, allow_nan=False, separators=(",", ":")),
+                "HISTORY_TEXT",
+                immutable=True,
+            )
+        from .research_runtime_profile import _restore_runtime_research_profile
+
+        if not _restore_runtime_research_profile(self, context, task, token, snapshot):
+            backend._activate_research_binding()
+        backend._qualify_research_binding()
+        agent = backend.build_agent()
+        context.qualify_completion(
+            token, policy=backend.approval_policy, qualify_original=qualify_original, sdk_snapshot=snapshot
+        )
+        from ...control_plane.normal_run_checkpoint import _canonical
+
+        snapshot_raw = _canonical(snapshot)
+        agent.load_snapshot(Snapshot.from_dict(json.loads(snapshot_raw)))
+        context.qualify_completion(
+            token, policy=backend.approval_policy, qualify_original=qualify_original, sdk_snapshot=snapshot
+        )
+        self._normal_agent = agent
+        self._normal_completion = (context, token, qualify_original)
+        self._normal_completion_snapshot = snapshot_raw
+        # Research restoration restricts re-fetching; this first claim still
+        # admits no SDK invocation or successor producer.
+        return token
+
+    def continue_normal_completion(self):
+        """Invoke the exact claimed Agent once; current fences gate every boundary."""
+        from strands.hooks import BeforeModelCallEvent, BeforeToolCallEvent
+
+        from .guardrail_assessment import GuardrailAssessmentCapture
+        from .recovery_notice import (
+            append_recovery_report,
+            apply_recovery_notice,
+            check_recovery_notice_ready,
+            log_restore_completed,
+            recovery_report_paragraph,
+        )
+        from .tool_binding_backend import AgentTurn, _warn_input_hold
+
+        backend = self.tool_backend
+        agent = getattr(self, "_normal_agent", None)
+        owned = getattr(self, "_normal_completion", None)
+        snapshot_raw = getattr(self, "_normal_completion_snapshot", None)
+        if agent is None or type(owned) is not tuple or len(owned) != 3 or type(snapshot_raw) is not str:
+            raise ValueError("claimed normal Agent is unavailable")
+        context, token, qualify_original = owned
+        notice_state = {"prompt": None}
+
+        def current():
+            if (
+                self.tool_backend is not backend
+                or self._normal_agent is not agent
+                or self._normal_completion is not owned
+                or self._normal_completion_snapshot != snapshot_raw
+                or backend._input_hold
+                or (notice_state["prompt"] is not None and agent.system_prompt != notice_state["prompt"])
+            ):
+                raise ValueError("normal continuation lifetime or admission changed")
+            context.qualify_completion(
+                token,
+                policy=backend.approval_policy,
+                qualify_original=qualify_original,
+                sdk_snapshot=json.loads(snapshot_raw),
+            )
+            backend._qualify_research_binding()
+
+        def fence(event):
+            try:
+                if event.agent is not agent:
+                    raise ValueError("normal continuation Agent changed")
+                current()
+            except BaseException:
+                with backend._input_lock:
+                    already_held = backend._input_hold
+                    backend._input_hold = True
+                if not already_held:
+                    _warn_input_hold("AMLAS_INPUT_HOLD phase=completion_fence reason=fence_refused")
+                raise
+
+        capture = GuardrailAssessmentCapture()
+        previous = getattr(agent, "callback_handler", None)
+        composed = capture.wrap(previous) if callable(previous) else None
+        try:
+            current()
+            check_recovery_notice_ready(agent, context)
+            context.begin_completion_invocation(
+                token,
+                policy=backend.approval_policy,
+                qualify_original=qualify_original,
+                sdk_snapshot=json.loads(snapshot_raw),
+            )
+            # The start CAS is won: this Agent is the one invocation of the restored run. The restore line is written first (it does not depend on the
+            # notice), the record block is built now from the invoking receipt, and the notice goes into the system prompt, outside the SDK
+            # snapshot, so the claimed messages, the snapshot hash and every qualification pass stay exactly as claimed.
+            log_restore_completed(context)
+            report_record = recovery_report_paragraph(context)
+            apply_recovery_notice(agent, context)
+            notice_state["prompt"] = agent.system_prompt
+            agent.hooks.add_callback(BeforeModelCallEvent, fence)
+            agent.hooks.add_callback(BeforeToolCallEvent, fence)
+            if composed is not None:
+                agent.callback_handler = composed
+            state = backend._invocation_state()
+            current()
+            try:
+                result = agent(None, invocation_state=state)
+            except Exception:
+                # SDK wraps callback failures; never expose or retry its raw cause.
+                raise ValueError("normal completion invocation refused or unresolved") from None
+            current()
+            turn = AgentTurn(
+                final_text=(
+                    "Waiting for original native operations to complete."
+                    if backend._pending_pause_result(agent, result)
+                    else backend._extract_final_text(result)
+                ),
+                executions=backend._extract_qualified_normal_executions(result, agent),
+                guardrail_outcome=backend._extract_guardrail_outcome(result),
+                guardrail_assessment=capture.close(),
+                input_admission=backend._input_admission_data(),
+            )
+            current()
+            response = self._agent_turn_response(turn)
+            response = append_recovery_report(response, report_record)
+            current()
+            return response
+        except BaseException:
+            with backend._input_lock:
+                already_held = backend._input_hold
+                backend._input_hold = True
+            if not already_held:
+                _warn_input_hold("AMLAS_INPUT_HOLD phase=completion_run reason=completion_refused")
+            raise
+        finally:
+            capture.close()
+            if composed is not None and agent.callback_handler is composed:
+                agent.callback_handler = previous
+
+    def load_normal_snapshot(self, task):
+        """Freshly admit the native-bound prefix and load the public SDK snapshot."""
+        from strands import Snapshot
+
+        from ...config.guardrails import guardrail_checks_enabled
+        from ...control_plane.normal_run_checkpoint import (
+            _canonical,
+            _captured_snapshot_messages,
+            _task_causal_prefix,
+        )
+        from ...control_plane.producer_snapshot import _approved_read
+
+        backend = self.tool_backend
+        _approved_read(backend.approval_policy)
+        prefix = _task_causal_prefix(task)
+        if _canonical(_captured_snapshot_messages(task["sdk_snapshot"])) != _canonical(prefix) or (
+            # Explicitly disabled checks (the deployed configuration) own no checker and admission
+            # is a pass-through; enabled checks without a selected checker still refuse.
+            backend._selected_input_checker() is None and guardrail_checks_enabled()
+        ):
+            raise ValueError("current normal snapshot admission unavailable")
+        for message in prefix:
+            backend._admit_input(
+                json.dumps(message, ensure_ascii=False, allow_nan=False, separators=(",", ":")),
+                "HISTORY_TEXT",
+                immutable=True,
+            )
+        backend._activate_research_binding()
+        backend._qualify_research_binding()
+        agent = backend.build_agent()
+        _approved_read(backend.approval_policy)
+        agent.load_snapshot(Snapshot.from_dict(task["sdk_snapshot"]))
+        _approved_read(backend.approval_policy)
+        from .tool_binding_backend import _record_messages
+
+        if _record_messages(agent.messages) != prefix:
+            raise ValueError("loaded SDK snapshot changed admitted history")
+        self._normal_agent = agent
+        return backend._normal_original_result
 
     def reconfigure_mode(self, *, bedrock_enabled: bool) -> None:
         """Re-apply runtime-mode knobs to the chat brain (Phase D1, design §B.1).
@@ -863,6 +1140,112 @@ class ChatEngine:
             action="aws_gated",
             data={"command": action_label, "offline": True},
         )
+
+    def _close_original_model(self):
+        """Close this exact in-memory original, without a native cancellation claim."""
+        self.tool_backend._close_warm_original(self)
+
+    async def _observe_pending_model_once(self):
+        """Observe one original; cancellation drains its exact copied-context worker."""
+        observation = asyncio.create_task(asyncio.to_thread(self.tool_backend._observe_pending_model_once))
+        try:
+            return await asyncio.shield(observation)
+        except asyncio.CancelledError:
+            self._close_original_model()
+            # Repeated caller cancellation cannot abandon this owned thread.
+            while not observation.done():
+                try:
+                    await asyncio.shield(observation)
+                except asyncio.CancelledError:
+                    continue
+            if not observation.cancelled():
+                observation.exception()  # Retrieve any final error without replacing cancellation.
+            raise
+
+    def _has_pending_original_model(self):
+        """Select only this engine's actual pending original; DATA, never permission."""
+        import os
+
+        from .tool_binding_backend import _PendingOriginalModel, _PendingOriginalProducer
+
+        backend = self.tool_backend
+        if type(backend) is not ToolBindingBackend:
+            return False
+        with backend._warm_capture_lock:
+            pending = backend._warm_pending
+            if pending is None:
+                pending_values = tuple(backend._warm_pending_producers.values())
+                if not pending_values:
+                    return False
+                if any(
+                    type(value) is not _PendingOriginalProducer
+                    or value.pid != os.getpid()
+                    or value.agent is None
+                    for value in pending_values
+                ):
+                    raise ValueError("original producer selection unavailable")
+                if backend._warm_owner is not self or backend._warm_pid != os.getpid():
+                    raise ValueError("original producer owner unavailable")
+                return True
+            if (
+                type(pending) is not _PendingOriginalModel
+                or backend._warm_owner is not self
+                or backend._warm_pid != os.getpid()
+                or pending.pid != os.getpid()
+                or pending.agent is None
+                or any(a is not b for a, b in zip(backend._warm_graph(), pending.graph, strict=True))
+                or any(
+                    a is not b for a, b in zip(backend._warm_graph(), backend._warm_owner_graph, strict=True)
+                )
+            ):
+                raise ValueError("original warm selection unavailable")
+            return True
+
+    def _agent_turn_response(self, turn, message=""):
+        """Reuse the ordinary renderer/fold without constructing a new user turn."""
+        response = ChatResponse(
+            message=render_agent_turn(turn),
+            action="tool_agent_turn",
+            data={
+                "tools_used": [e.tool_name for e in turn.executions if e.status == "executed"],
+                "pending_confirmation": [
+                    e.tool_name for e in turn.executions if e.status == "needs_confirmation"
+                ],
+                # Hop-1 C-1: a compact per-tool result summary (one short
+                # "tool: k=v" line per executed tool, from the structured
+                # ``ToolExecution.result_summary`` — NOT a raw dump, NOT the
+                # ephemeral ticker) that ``process_message`` persists onto the
+                # assistant ChatMessage for bounded history replay next turn.
+                "tool_summary": self._summarize_tool_results(turn.executions),
+            },
+        )
+        guardrail_outcome = getattr(turn, "guardrail_outcome", None)
+        if type(guardrail_outcome) is GuardrailOutcome:
+            response.action = "guardrail_intervened"
+            response.data["guardrail_outcome"] = guardrail_outcome.to_dict()
+        guardrail_assessment = getattr(turn, "guardrail_assessment", None)
+        if type(guardrail_assessment) is GuardrailAssessment:
+            response.data["guardrail_assessment"] = guardrail_assessment.to_dict()
+        admission = getattr(turn, "input_admission", None)
+        if (
+            type(admission) is dict
+            and admission.get("schema_version") == 1
+            and admission.get("data_only") is True
+            and admission.get("native_admission") is False
+            and admission.get("quality_success") is False
+            and admission.get("status") in {"held", "quarantined", "admitted"}
+        ):
+            response.data["input_admission"] = copy.deepcopy(admission)
+            if admission["status"] == "held" and response.action != "guardrail_intervened":
+                response.action = "input_admission_held"
+        # Phase 5 (design §E.4/§E.8, GP-2/GO-4): fold this turn's local-agent
+        # tool trace onto the shared bus — one ``AgentActivity`` record for the
+        # ``tui_chat_agent`` plus any spec/dataset the agent produced — so the
+        # local chat agent's work appears in the Dashboard's AgentActivityPanel
+        # (alongside cloud swarm agents) and its generated spec/dataset show up
+        # on the Specs/Data/Pipeline tabs for review. Null-safe when no bus.
+        self._fold_agent_turn(turn, message)
+        return response
 
     async def process_message(self, message: str, thought_trace: Any | None = None) -> ChatResponse:
         """Top-level chat boundary — capture any escaped error, then re-raise.
@@ -1185,29 +1568,7 @@ class ChatEngine:
                 history=history,
             )
             if turn is not None:
-                response = ChatResponse(
-                    message=render_agent_turn(turn),
-                    action="tool_agent_turn",
-                    data={
-                        "tools_used": [e.tool_name for e in turn.executions if e.status == "executed"],
-                        "pending_confirmation": [
-                            e.tool_name for e in turn.executions if e.status == "needs_confirmation"
-                        ],
-                        # Hop-1 C-1: a compact per-tool result summary (one short
-                        # "tool: k=v" line per executed tool, from the structured
-                        # ``ToolExecution.result_summary`` — NOT a raw dump, NOT the
-                        # ephemeral ticker) that ``process_message`` persists onto the
-                        # assistant ChatMessage for bounded history replay next turn.
-                        "tool_summary": self._summarize_tool_results(turn.executions),
-                    },
-                )
-                # Phase 5 (design §E.4/§E.8, GP-2/GO-4): fold this turn's local-agent
-                # tool trace onto the shared bus — one ``AgentActivity`` record for the
-                # ``tui_chat_agent`` plus any spec/dataset the agent produced — so the
-                # local chat agent's work appears in the Dashboard's AgentActivityPanel
-                # (alongside cloud swarm agents) and its generated spec/dataset show up
-                # on the Specs/Data/Pipeline tabs for review. Null-safe when no bus.
-                self._fold_agent_turn(turn, message)
+                response = self._agent_turn_response(turn, message)
 
         # 5. Local keyword fallback (always works, offline).
         if response is None:
@@ -1445,7 +1806,7 @@ class ChatEngine:
             parts.append(f"\n## Pipeline Run: {state.get('run_id', '?')} status={state.get('status', '?')}")
 
         if not parts:
-            return "No system state available yet. Run /status or /leaderboard to load state."
+            return ""
         return _apply_context_budget(parts)
 
     # ─── Phase 2 — shared ContextBus helpers (null-safe / additive) ───────────
@@ -5229,6 +5590,9 @@ _DATA_SCAN_PRUNE_DIRS: frozenset[str] = frozenset(
     }
 )
 _DATA_SCAN_SUFFIXES: tuple[str, ...] = (".csv", ".parquet")
+
+
+_WARM_CHAT_ENGINE_TYPE = ChatEngine
 
 
 def _scan_data_files(roots: list[Path]) -> list[str]:

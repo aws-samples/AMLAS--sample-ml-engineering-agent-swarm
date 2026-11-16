@@ -1,0 +1,31 @@
+# Fixed data-only case-freeze guest; no SDK/model/application package.
+FROM --platform=linux/amd64 public.ecr.aws/docker/library/rust:1.90.0-alpine3.22@sha256:ee9b9f2ebd8741e4ecf1ade08918e492d642c4e625be481bb7b7954b89e9d504 AS initializer
+WORKDIR /build
+COPY processing_bootstrap/Cargo.toml processing_bootstrap/Cargo.lock ./
+COPY processing_bootstrap/src ./src
+RUN cargo build --release --locked --offline --features sagemaker-native-v1 --target x86_64-unknown-linux-musl
+FROM --platform=linux/amd64 public.ecr.aws/docker/library/python:3.11-slim@sha256:db3ff2e1800a8581e2c48a27c3995339d47bdf046da21c7627accd3d51053a93
+ARG AMLAS_SOURCE_COMMIT
+LABEL org.opencontainers.image.revision=$AMLAS_SOURCE_COMMIT
+ENV AMLAS_SOURCE_COMMIT=$AMLAS_SOURCE_COMMIT
+RUN python -c 'import os,re; assert re.fullmatch("[a-f0-9]{40}",os.environ.get("AMLAS_SOURCE_COMMIT",""))'
+WORKDIR /app
+COPY uv.lock /app/uv.lock
+RUN python -c 'import tomllib; p={x["name"]:x for x in tomllib.load(open("uv.lock","rb"))["package"]}; todo=["pyarrow"]; seen=set(); f=open("/app/requirements.preparation.txt","w"); exec("while todo:\n n=todo.pop()\n if n in seen: continue\n seen.add(n)\n q=p[n]\n todo.extend(d[\"name\"] for d in q.get(\"dependencies\",[]))\n hashes=[x[\"hash\"] for x in q.get(\"wheels\",[])]\n if not hashes: raise RuntimeError(\"unhashed binary dependency\")\n f.write(n+\"==\"+q[\"version\"]+\" \"+\" \".join(\"--hash=\"+h for h in hashes)+\"\\n\")")' && \
+    pip install --no-cache-dir --only-binary=:all: --require-hashes -r /app/requirements.preparation.txt
+RUN useradd --create-home --uid 10001 appuser && mkdir -p /opt/ml/processing/output && chown 10001:10001 /opt/ml/processing/output && chmod 0700 /opt/ml/processing/output && chmod 0755 /opt/ml/processing
+COPY --from=initializer --chmod=0555 /build/target/x86_64-unknown-linux-musl/release/amlas-processing-init /usr/local/bin/amlas-processing-init
+COPY processing_bootstrap/processing_identity.py /app/processing_identity.py
+RUN mkdir -p /app/case_worker_pkg/backends /app/case_worker_pkg/data_eng /app/case_worker_pkg/sagemaker_entrypoints && touch /app/case_worker_pkg/__init__.py /app/case_worker_pkg/backends/__init__.py /app/case_worker_pkg/data_eng/__init__.py /app/case_worker_pkg/sagemaker_entrypoints/__init__.py
+COPY scripts/coding_case_worker_native.py /app/coding_case_worker.py
+COPY src/amlas/backends/types.py /app/case_worker_pkg/backends/types.py
+COPY src/amlas/data_eng/coding_case_profile.py /app/case_worker_pkg/data_eng/coding_case_profile.py
+COPY src/amlas/data_eng/coding_case_codec.py /app/case_worker_pkg/data_eng/coding_case_codec.py
+COPY src/amlas/data_eng/coding_case_manifest.py /app/case_worker_pkg/data_eng/coding_case_manifest.py
+COPY src/amlas/data_eng/coding_case_managed.py /app/case_worker_pkg/data_eng/coding_case_managed.py
+COPY src/amlas/data_eng/inspection_schema.py /app/case_worker_pkg/data_eng/inspection_schema.py
+COPY src/amlas/sagemaker_entrypoints/coding_case_freeze.py /app/case_worker_pkg/sagemaker_entrypoints/coding_case_freeze.py
+RUN chmod 0555 /app/processing_identity.py /app/coding_case_worker.py /app/case_worker_pkg /app/case_worker_pkg/*.py /app/case_worker_pkg/backends /app/case_worker_pkg/backends/*.py /app/case_worker_pkg/data_eng /app/case_worker_pkg/data_eng/*.py /app/case_worker_pkg/sagemaker_entrypoints /app/case_worker_pkg/sagemaker_entrypoints/*.py
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+USER root
+ENTRYPOINT ["/usr/local/bin/amlas-processing-init", "case-freeze"]

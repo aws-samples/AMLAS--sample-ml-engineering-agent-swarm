@@ -107,3 +107,34 @@ def test_intended_unverified_binding_refuses_role_and_runtime_creation(runtime_w
         for call in runtime_calls(runtime_workspace)
     )
     assert "AGENTCORE_RUNTIME_DEPLOY_DONE" not in result.stdout
+
+
+@pytest.mark.parametrize("prefix", ["amlas", "binding-blue"])
+def test_generated_runtime_reads_case_tags_only_on_owned_processing_jobs(runtime_workspace, prefix):
+    runtime_workspace[1]["AMLAS_DEPLOYMENT_PREFIX"] = prefix
+    result = run_runtime(runtime_workspace)
+    assert result.returncode == 0, result.stdout + result.stderr
+    statements = state(runtime_workspace)["policy"]["Statement"]
+    grants = [item for item in statements if "sagemaker:ListTags" in item["Action"]]
+    assert grants == [
+        {
+            "Sid": "SageMakerProcessingTagRead",
+            "Effect": "Allow",
+            "Action": ["sagemaker:ListTags"],
+            "Resource": [f"arn:aws:sagemaker:us-east-1:{ACCOUNT}:processing-job/{prefix}-*"],
+        },
+        # 2026-11-11: the fine-tune, reload and generation readback reads the tags of owned training jobs too
+        # (test_runtime_training_tag_read.py). The processing statement above is unchanged.
+        {
+            "Sid": "SageMakerTrainingTagRead",
+            "Effect": "Allow",
+            "Action": ["sagemaker:ListTags"],
+            "Resource": [f"arn:aws:sagemaker:us-east-1:{ACCOUNT}:training-job/{prefix}-*"],
+        },
+    ]
+    tag_write = next(item for item in statements if item["Sid"] == "SageMakerJobTags")
+    assert tag_write["Action"] == ["sagemaker:AddTags"]
+    assert tag_write["Resource"] == [
+        f"arn:aws:sagemaker:us-east-1:{ACCOUNT}:training-job/{prefix}-*",
+        f"arn:aws:sagemaker:us-east-1:{ACCOUNT}:processing-job/{prefix}-*",
+    ]

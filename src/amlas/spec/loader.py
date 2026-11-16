@@ -12,7 +12,17 @@ from .schema import SpecModel
 
 
 class SpecLoadError(Exception):
-    """Raised when a task_spec.md cannot be parsed or validated."""
+    """Raised when a task_spec.md cannot be parsed or validated.
+
+    ``issues`` carries the structured schema failures as ``(loc, type)`` pairs (no input values, no messages) and
+    ``kind`` is ``"schema"`` for them or ``"front_matter"`` when the text had no readable YAML front matter, so a
+    caller can give guidance without parsing the rendered text.
+    """
+
+    def __init__(self, message: str, issues: tuple = (), kind: str = "schema") -> None:
+        super().__init__(message)
+        self.issues = tuple(issues)
+        self.kind = kind
 
 
 def load_spec_from_text(text: str) -> SpecModel:
@@ -20,19 +30,24 @@ def load_spec_from_text(text: str) -> SpecModel:
     try:
         post = frontmatter.loads(text)
     except Exception as e:  # pragma: no cover — frontmatter raises various exceptions
-        raise SpecLoadError(f"Failed to parse YAML front-matter: {e}") from e
+        raise SpecLoadError(f"Failed to parse YAML front-matter: {e}", kind="front_matter") from e
 
     metadata: dict[str, Any] = dict(post.metadata)
     if not metadata:
         raise SpecLoadError(
-            "No YAML front-matter found. task_spec.md must start with '---' delimited YAML."
+            "No YAML front-matter found. task_spec.md must start with '---' delimited YAML.",
+            kind="front_matter",
         )
     metadata["domain_notes"] = post.content.strip()
 
     try:
         return SpecModel(**metadata)
     except ValidationError as e:
-        raise SpecLoadError(f"Spec validation failed:\n{e}") from e
+        issues = tuple(
+            (tuple(item["loc"]), str(item["type"]))
+            for item in e.errors(include_url=False, include_context=False, include_input=False)
+        )
+        raise SpecLoadError(f"Spec validation failed:\n{e}", issues) from e
 
 
 def load_spec_from_path(path: str | Path) -> SpecModel:

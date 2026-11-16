@@ -30,6 +30,7 @@ from aws_cdk import (
     CfnParameter,
     CfnResource,
     Duration,
+    Fn,
     RemovalPolicy,
     Stack,
 )
@@ -47,6 +48,9 @@ from aws_cdk import (
 )
 from aws_cdk import (
     aws_lambda as _lambda,
+)
+from aws_cdk import (
+    aws_lambda_event_sources as event_sources,
 )
 from aws_cdk import (
     aws_logs as logs,
@@ -71,6 +75,7 @@ from ._iam import (
 from ._kms import make_data_key
 from ._s3 import make_access_log_bucket
 from ._tags import apply_cost_tags, deployment_tags
+from .async_training_stack import _normal_callback_environment
 
 # Lambda code asset root. Resolved from ``__file__`` (repo root = parents[2] of
 # ``infra/cdk_stacks/<stack>.py``) rather than left as the bare relative ``"src"``,
@@ -96,6 +101,11 @@ class RuntimeStack(Stack):
         kms_key_arn: str = "",
         runtime_network_mode: str = "PUBLIC",
         capture_content: bool = False,
+        normal_callback_enabled: bool = False,
+        normal_callback_deployment_id: str = "",
+        normal_callback_qualifier: str = "",
+        normal_callback_runtime_version: str = "",
+        normal_callback_route_sha256: str = "",
         **kwargs: Any,
     ) -> None:
         super().__init__(scope, cid, **kwargs)
@@ -116,6 +126,15 @@ class RuntimeStack(Stack):
             raise ValueError(
                 "region_name must match the stack environment; configure the deployment region through env."
             )
+        self._normal_callback_environment = _normal_callback_environment(
+            enabled=normal_callback_enabled,
+            account=self.account,
+            region=self.region_name,
+            deployment_id=normal_callback_deployment_id,
+            qualifier=normal_callback_qualifier,
+            runtime_version=normal_callback_runtime_version,
+            route_sha256=normal_callback_route_sha256,
+        )
         # WA-05 (Security/Network): the AgentCore Runtime + Code Interpreter NetworkMode is a
         # configurable seam. Default PUBLIC ONLY because AgentCore VPC-mode support is the
         # external blocker (audit §7 / R-009); an adopter flips this to a private mode
@@ -172,7 +191,16 @@ class RuntimeStack(Stack):
         # self.runtime.get_att("AgentRuntimeArn") (see task 4.5).
         self.lambda_role = self._build_lambda_role()
         self.callback_fn = self._build_callback_lambda()
+        if self._normal_callback_environment:
+            self.callback_fn.add_event_source(
+                event_sources.DynamoEventSource(
+                    self.jobs_table,
+                    starting_position=_lambda.StartingPosition.LATEST,
+                    batch_size=1,
+                )
+            )
         self.event_rule = self._build_event_rule()
+        self.processing_event_rule = self._build_processing_event_rule()
         self.patch_runtime_otel = self._build_patch_runtime_otel()
 
         self._emit_outputs()
@@ -202,6 +230,9 @@ class RuntimeStack(Stack):
             self,
             "TrainingJobsTable",
             table_name=f"{self.hyphen_project}-training-jobs",
+            stream=(
+                dynamodb.StreamViewType.NEW_AND_OLD_IMAGES if self._normal_callback_environment else None
+            ),
             partition_key=dynamodb.Attribute(name="job_name", type=dynamodb.AttributeType.STRING),
             billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
             point_in_time_recovery_specification=dynamodb.PointInTimeRecoverySpecification(
@@ -476,6 +507,26 @@ class RuntimeStack(Stack):
         )
         role.add_to_policy(
             iam.PolicyStatement(
+                sid="SageMakerProcessingTagRead",
+                actions=["sagemaker:ListTags"],
+                resources=[
+                    f"arn:aws:sagemaker:{self.region_name}:{self.account}:processing-job/{self.hyphen_project}-*"
+                ],
+            )
+        )
+        # The fine-tune, reload and generation readback (SageMakerQwenSftBackend.status) and the restore path
+        # read the ownership tags of the deployment's own training jobs after the request readback.
+        role.add_to_policy(
+            iam.PolicyStatement(
+                sid="SageMakerTrainingTagRead",
+                actions=["sagemaker:ListTags"],
+                resources=[
+                    f"arn:aws:sagemaker:{self.region_name}:{self.account}:training-job/{self.hyphen_project}-*"
+                ],
+            )
+        )
+        role.add_to_policy(
+            iam.PolicyStatement(
                 sid="FeatureStoreRuntime",
                 actions=[
                     "sagemaker:PutRecord",
@@ -506,6 +557,12 @@ class RuntimeStack(Stack):
             ),
             f"arn:aws:logs:{self.region_name}:{self.account}:log-group:/aws/bedrock-agentcore/*": (
                 "log writes are confined to this account's AgentCore log-group namespace"
+            ),
+            f"arn:aws:sagemaker:{self.region_name}:{self.account}:processing-job/{self.hyphen_project}-*": (
+                "ListTags reads ownership tags only on this deployment's processing jobs"
+            ),
+            f"arn:aws:sagemaker:{self.region_name}:{self.account}:training-job/{self.hyphen_project}-*": (
+                "ListTags reads ownership tags only on this deployment's training jobs"
             ),
             f"arn:aws:sagemaker:{self.region_name}:{self.account}:feature-group/*": (
                 "online feature-store APIs are confined to feature groups in this account and region"
@@ -586,10 +643,35 @@ class RuntimeStack(Stack):
             self.jobs_table,
             encryption_key=self.data_key,
         )
+        runtime_arn = self.runtime.get_att("AgentRuntimeArn").to_string()
+        invoke_resources = [runtime_arn]
+        if self._normal_callback_environment:
+            invoke_resources.append(
+                Fn.join(
+                    "",
+                    [
+                        runtime_arn,
+                        "/runtime-endpoint/",
+                        self._normal_callback_environment["AGENTCORE_RUNTIME_QUALIFIER"],
+                    ],
+                )
+            )
+            role.add_to_policy(
+                iam.PolicyStatement(
+                    actions=["bedrock-agentcore:GetAgentRuntime"],
+                    resources=[runtime_arn],
+                )
+            )
+            role.add_to_policy(
+                iam.PolicyStatement(
+                    actions=["bedrock-agentcore:GetAgentRuntimeEndpoint"],
+                    resources=invoke_resources,
+                )
+            )
         role.add_to_policy(
             iam.PolicyStatement(
                 actions=["bedrock-agentcore:InvokeAgentRuntime"],
-                resources=[self.runtime.get_att("AgentRuntimeArn").to_string()],
+                resources=invoke_resources,
             )
         )
         return role
@@ -750,6 +832,20 @@ class RuntimeStack(Stack):
     # ------------------------------------------------------------------
 
     def _build_callback_lambda(self) -> _lambda.Function:
+        environment = {
+            "AGENTCORE_RUNTIME_ARN": self.runtime.get_att("AgentRuntimeArn").to_string(),
+            "JOBS_TABLE": self.jobs_table.table_name,
+        }
+        if self._normal_callback_environment:
+            environment.update(self._normal_callback_environment)
+            environment.update(
+                {
+                    "AMLAS_CALLBACK_ROLE_ARN": self.lambda_role.role_arn,
+                    "AMLAS_CALLBACK_ROLE_ID": self.lambda_role.node.default_child.get_att(
+                        "RoleId"
+                    ).to_string(),
+                }
+            )
         return _lambda.Function(
             self,
             "CallbackFunction",
@@ -762,10 +858,7 @@ class RuntimeStack(Stack):
             log_group=self.callback_log_group,
             timeout=Duration.minutes(2),
             memory_size=512,
-            environment={
-                "AGENTCORE_RUNTIME_ARN": self.runtime.get_att("AgentRuntimeArn").to_string(),
-                "JOBS_TABLE": self.jobs_table.table_name,
-            },
+            environment=environment,
         )
 
     def _build_event_rule(self) -> events.Rule:
@@ -777,8 +870,29 @@ class RuntimeStack(Stack):
             event_pattern=events.EventPattern(
                 source=["aws.sagemaker"],
                 detail_type=["SageMaker Training Job State Change"],
+                # Every product training job is named "<deployment prefix>-..."; the filter keeps another
+                # deployment's training events in the same account and Region away from this callback.
                 detail={
                     "TrainingJobStatus": ["Completed", "Failed", "Stopped"],
+                    "TrainingJobName": [{"prefix": f"{self.hyphen_project}-"}],
+                },
+            ),
+        )
+        rule.add_target(targets.LambdaFunction(self.callback_fn))
+        return rule
+
+    def _build_processing_event_rule(self) -> events.Rule:
+        rule = events.Rule(
+            self,
+            "SageMakerProcessingStateChangeRule",
+            rule_name=f"{self.hyphen_project}-sagemaker-processing-state-change",
+            description="Routes deployment Processing terminal events to the existing callback",
+            event_pattern=events.EventPattern(
+                source=["aws.sagemaker"],
+                detail_type=["SageMaker Processing Job State Change"],
+                detail={
+                    "ProcessingJobStatus": ["Completed", "Failed", "Stopped"],
+                    "ProcessingJobName": [{"prefix": f"{self.hyphen_project}-"}],
                 },
             ),
         )

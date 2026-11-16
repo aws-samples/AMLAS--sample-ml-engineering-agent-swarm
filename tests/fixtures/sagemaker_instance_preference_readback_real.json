@@ -1,0 +1,207 @@
+{
+ "jobs": [
+  {
+   "SecondaryStatus": "Completed",
+   "TrainingJobStatus": "Completed",
+   "backend": "qwen_sft",
+   "described_resource_config": {
+    "InstanceCount": 1,
+    "InstancePreferences": [
+     {
+      "InstanceType": "ml.g6e.12xlarge"
+     },
+     {
+      "InstanceType": "ml.g6e.16xlarge"
+     },
+     {
+      "InstanceType": "ml.g6e.8xlarge"
+     },
+     {
+      "InstanceType": "ml.g6e.4xlarge"
+     },
+     {
+      "InstanceType": "ml.g6e.2xlarge"
+     }
+    ],
+    "SelectedInstanceCount": 1,
+    "SelectedInstanceType": "ml.g6e.16xlarge",
+    "VolumeSizeInGB": 100
+   },
+   "name": "fixture-deploy-sft-full",
+   "operation": "train",
+   "secondary_status_sequence": [
+    "Starting",
+    "Pending",
+    "Downloading",
+    "Training",
+    "Uploading",
+    "Completed"
+   ],
+   "stored_request_resource_config": {
+    "InstanceCount": 1,
+    "InstancePreferences": [
+     {
+      "InstanceType": "ml.g6e.12xlarge"
+     },
+     {
+      "InstanceType": "ml.g6e.16xlarge"
+     },
+     {
+      "InstanceType": "ml.g6e.8xlarge"
+     },
+     {
+      "InstanceType": "ml.g6e.4xlarge"
+     },
+     {
+      "InstanceType": "ml.g6e.2xlarge"
+     }
+    ],
+    "VolumeSizeInGB": 100
+   }
+  },
+  {
+   "SecondaryStatus": "Completed",
+   "TrainingJobStatus": "Completed",
+   "backend": "qwen_sft",
+   "described_resource_config": {
+    "InstanceCount": 1,
+    "InstancePreferences": [
+     {
+      "InstanceType": "ml.g6e.4xlarge"
+     },
+     {
+      "InstanceType": "ml.g6e.8xlarge"
+     },
+     {
+      "InstanceType": "ml.g6e.16xlarge"
+     },
+     {
+      "InstanceType": "ml.g6e.2xlarge"
+     },
+     {
+      "InstanceType": "ml.g6e.12xlarge"
+     }
+    ],
+    "SelectedInstanceCount": 1,
+    "SelectedInstanceType": "ml.g6e.16xlarge",
+    "VolumeSizeInGB": 100
+   },
+   "name": "fixture-deploy-reload",
+   "operation": "reload",
+   "secondary_status_sequence": [
+    "Starting",
+    "Pending",
+    "Downloading",
+    "Training",
+    "Uploading",
+    "Completed"
+   ],
+   "stored_request_resource_config": {
+    "InstanceCount": 1,
+    "InstancePreferences": [
+     {
+      "InstanceType": "ml.g6e.4xlarge"
+     },
+     {
+      "InstanceType": "ml.g6e.8xlarge"
+     },
+     {
+      "InstanceType": "ml.g6e.16xlarge"
+     },
+     {
+      "InstanceType": "ml.g6e.2xlarge"
+     },
+     {
+      "InstanceType": "ml.g6e.12xlarge"
+     }
+    ],
+    "VolumeSizeInGB": 100
+   }
+  },
+  {
+   "SecondaryStatus": "Completed",
+   "TrainingJobStatus": "Completed",
+   "backend": "coding_generation",
+   "described_resource_config": {
+    "InstanceCount": 1,
+    "InstancePreferences": [
+     {
+      "InstanceType": "ml.g6e.4xlarge"
+     },
+     {
+      "InstanceType": "ml.g6e.8xlarge"
+     },
+     {
+      "InstanceType": "ml.g6e.16xlarge"
+     },
+     {
+      "InstanceType": "ml.g6e.2xlarge"
+     },
+     {
+      "InstanceType": "ml.g6e.12xlarge"
+     }
+    ],
+    "SelectedInstanceCount": 1,
+    "SelectedInstanceType": "ml.g6e.4xlarge",
+    "VolumeSizeInGB": 100
+   },
+   "name": "fixture-deploy-gen-tuned",
+   "operation": null,
+   "secondary_status_sequence": [
+    "Starting",
+    "Pending",
+    "Downloading",
+    "Training",
+    "Uploading",
+    "Completed"
+   ],
+   "stored_request_resource_config": {
+    "InstanceCount": 1,
+    "InstancePreferences": [
+     {
+      "InstanceType": "ml.g6e.4xlarge"
+     },
+     {
+      "InstanceType": "ml.g6e.8xlarge"
+     },
+     {
+      "InstanceType": "ml.g6e.16xlarge"
+     },
+     {
+      "InstanceType": "ml.g6e.2xlarge"
+     },
+     {
+      "InstanceType": "ml.g6e.12xlarge"
+     }
+    ],
+    "VolumeSizeInGB": 100
+   }
+  },
+  {
+   "SecondaryStatus": "Completed",
+   "TrainingJobStatus": "Completed",
+   "backend": "coding_generation",
+   "described_resource_config": {
+    "InstanceCount": 1,
+    "InstanceType": "ml.g6e.4xlarge",
+    "VolumeSizeInGB": 100
+   },
+   "name": "fixture-deploy-gen-base",
+   "operation": null,
+   "secondary_status_sequence": [
+    "Starting",
+    "Pending",
+    "Downloading",
+    "Training",
+    "Uploading",
+    "Completed"
+   ],
+   "stored_request_resource_config": {
+    "InstanceCount": 1,
+    "InstanceType": "ml.g6e.4xlarge",
+    "VolumeSizeInGB": 100
+   }
+  }
+ ],
+ "source": "DescribeTrainingJob read-only on 2026-11-10 with botocore 1.43.127; stored request ResourceConfig from the saved handles of the same jobs (a GPU test run of 2026-11-10)"
+}

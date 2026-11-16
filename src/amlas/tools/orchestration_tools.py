@@ -93,9 +93,7 @@ def set_cloud_job_manager(job_manager: Any | None = None) -> None:
     _CLOUD_JOB_MANAGER = job_manager
 
 
-def set_cloud_dispatch_clients(
-    *, s3_client: Any | None = None, agentcore_client: Any | None = None
-) -> None:
+def set_cloud_dispatch_clients(*, s3_client: Any | None = None, agentcore_client: Any | None = None) -> None:
     """Register (or clear) the injectable S3 + AgentCore clients for cloud dispatch.
 
     Tests call this with fakes so ``dispatch_cloud_experiment`` never touches real AWS;
@@ -194,9 +192,7 @@ def _resolve_dispatch_config(base: Any | None, budget_overrides: dict[str, Any] 
 
     # Explicit budget overrides (from the chat tool call) win over everything, verbatim — NO
     # clamping. Only the fields the caller actually set (non-None) are applied.
-    overrides = {
-        k: v for k, v in (budget_overrides or {}).items() if v is not None
-    }
+    overrides = {k: v for k, v in (budget_overrides or {}).items() if v is not None}
     try:
         return replace(cfg, runtime_arn=arn, session_bucket=bucket, **overrides)
     except Exception:
@@ -260,9 +256,7 @@ def _accepted_params(capability_id: str) -> set[str]:
         return set()
 
 
-def _context_defaults_for(
-    capability_id: str, params: dict[str, Any], state: Any
-) -> dict[str, Any]:
+def _context_defaults_for(capability_id: str, params: dict[str, Any], state: Any) -> dict[str, Any]:
     """Compute the context-derived param DEFAULTS to fill on dispatch (H2-B; pure).
 
     Returns a NEW dict of ``{param: value}`` to ADD — it NEVER overwrites a key the LLM
@@ -379,11 +373,13 @@ def run_ml_capability(
     try:
         params = json.loads(params_json) if params_json and params_json.strip() else {}
         if not isinstance(params, dict):
-            return {"capability_id": capability_id, "status": "error",
-                    "error": f"params_json must be a JSON object, got {type(params).__name__}"}
+            return {
+                "capability_id": capability_id,
+                "status": "error",
+                "error": f"params_json must be a JSON object, got {type(params).__name__}",
+            }
     except json.JSONDecodeError as exc:
-        return {"capability_id": capability_id, "status": "error",
-                "error": f"invalid params_json: {exc}"}
+        return {"capability_id": capability_id, "status": "error", "error": f"invalid params_json: {exc}"}
 
     # ── Hop-2 context enrichment (additive, null-safe; LLM params always win) ──
     # Read the CURRENT active session context — the same singleton get_tui_context uses.
@@ -413,9 +409,23 @@ def run_ml_capability(
     if not isinstance(policy, ApprovalPolicy):
         policy = None
 
+    private_state = {}
+    if capability_id == "data_preparation_flow":
+        from amlas.control_plane.preparation_state import SessionPreparationStore
+
+        store = state.get("_amlas_preparation_store") if isinstance(state, dict) else None
+        private_state["_trusted_preparation_store"] = (
+            store if isinstance(store, SessionPreparationStore) else None
+        )
+
     result = invoke_capability(
-        capability_id=capability_id, params=params, steering=steering,
-        surface="chat", plan_only=plan_only, policy=policy,
+        capability_id=capability_id,
+        params=params,
+        steering=steering,
+        surface="chat",
+        plan_only=plan_only,
+        policy=policy,
+        **private_state,
     )
     return result.to_dict()
 
@@ -580,8 +590,8 @@ def estimate_dispatch_cost(
 
     # ── transparent ballpark cost model (all assumptions surfaced) ──
     # Bedrock: assume each lead sustains a modest token throughput over the wall-clock window.
-    tokens_per_lead_min = 1500        # combined in+out tokens/min/lead (rough)
-    out_frac = 0.4                    # fraction of tokens that are output (pricier)
+    tokens_per_lead_min = 1500  # combined in+out tokens/min/lead (rough)
+    out_frac = 0.4  # fraction of tokens that are output (pricier)
     total_tokens_k = (eff_leads * tokens_per_lead_min * eff_wall) / 1000.0
     in_price = book.price("bedrock_opus_input_per_1k")
     out_price = book.price("bedrock_opus_output_per_1k")
@@ -608,9 +618,7 @@ def estimate_dispatch_cost(
     ]
     warnings = list(book.warnings)
     if book.stale:
-        warnings.append(
-            f"price book last checked {book.checked_at or 'never'} (>30d) — figures may be dated"
-        )
+        warnings.append(f"price book last checked {book.checked_at or 'never'} (>30d) — figures may be dated")
 
     return {
         "is_estimate": True,
@@ -750,15 +758,11 @@ def dispatch_cloud_experiment(
 
     budget_overrides = {
         "trials": trials if trials and trials > 0 else None,
-        "wall_clock_minutes": (
-            wall_clock_minutes if wall_clock_minutes and wall_clock_minutes > 0 else None
-        ),
+        "wall_clock_minutes": (wall_clock_minutes if wall_clock_minutes and wall_clock_minutes > 0 else None),
         "max_rows": max_rows if max_rows and max_rows > 0 else None,
     }
     try:
-        dispatch_config = _resolve_dispatch_config(
-            _CLOUD_DISPATCH_CONFIG, budget_overrides=budget_overrides
-        )
+        dispatch_config = _resolve_dispatch_config(_CLOUD_DISPATCH_CONFIG, budget_overrides=budget_overrides)
     except (ValueError, FileNotFoundError) as exc:
         # SEC-01 fail-fast (unset runtime ARN / session bucket) → clean tool error.
         return {"status": "error", "error": str(exc)}
@@ -805,7 +809,9 @@ def dispatch_cloud_experiment(
                 run_status = getattr(result, "status", None)
                 # Map the run's terminal status onto the activity: accepted/completed →
                 # complete; anything else (error/budget_exhausted/None) → failed.
-                act_status = "complete" if run_status in ("accepted", "completed", "run_completed") else "failed"
+                act_status = (
+                    "complete" if run_status in ("accepted", "completed", "run_completed") else "failed"
+                )
                 bus.set_agent_activity(
                     AgentActivity(
                         agent_name="cloud_swarm",
@@ -860,6 +866,7 @@ def dispatch_cloud_experiment(
     # tests), run synchronously — behavior byte-identical to previous.
     jm = _CLOUD_JOB_MANAGER
     if jm is not None:
+
         def _job_body(progress_cb: Any, _cancel_token: Any) -> Any:
             try:
                 progress_cb(0.05, "dispatching to AgentCore swarm")

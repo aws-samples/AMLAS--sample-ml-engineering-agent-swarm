@@ -225,8 +225,36 @@ def test_implicit_config_is_constructed_after_agentcore_overlay(monkeypatch, tmp
     assert sessions[-1] == {"profile_name": "other-profile", "region_name": "eu-west-1"}
 
 
+def _setup_location_guard(repo: Path) -> None:
+    # Only these selector/publication fixtures receive this exact neutral proof.
+    # Production account/host refusal controls remain in test_account_image_build.
+    (repo / "scripts/lib/require_account_build_host.sh").write_text(
+        "#!/usr/bin/env bash\n"
+        "require_account_build_host() {\n"
+        '  "$TEST_PYTHON" -c \'import json,os,sys; '
+        'args=sys.argv[1:]; assert args == ["111122223333","us-east-1","--location-only"], args; '
+        'record={"tool":"fixture_location_guard","account":args[0],"region":args[1],"args":args,"native_proof":False}; '
+        'stream=open(os.environ["TEST_CALLS"],"a"); stream.write(json.dumps(record)+"\\n"); stream.close()'
+        '\' "$@"\n'
+        "}\n"
+    )
+
+
+def _assert_location_guard(records: list[dict]) -> None:
+    assert [item for item in records if item["tool"] == "fixture_location_guard"] == [
+        {
+            "tool": "fixture_location_guard",
+            "account": "111122223333",
+            "region": "us-east-1",
+            "args": ["111122223333", "us-east-1", "--location-only"],
+            "native_proof": False,
+        }
+    ]
+
+
 def _setup_stub(workspace, *, reject_role=False):
     repo, env, _ = workspace
+    _setup_location_guard(repo)
     tool = Path(env["PATH"].split(":")[0]) / "aws"
     source = tool.read_text().replace(
         ' print("UNEXPECTED-AWS-CALL", file=sys.stderr); sys.exit(9)',
@@ -249,6 +277,12 @@ def _setup_stub(workspace, *, reject_role=False):
         helper += "echo 'Existing role is incompatible; choose a distinct role.' >&2\nexit 1\n"
     else:
         helper += "printf '%s\\n' 'AGENTCORE_RUNTIME_ARN=arn:aws:bedrock-agentcore:us-east-1:111122223333:runtime/example' 'FINAL_STATUS=READY' 'AGENTCORE_RUNTIME_DEPLOY_DONE' 'RESOLVED_SESSION_BUCKET=current-bucket'\n"
+        helper += (
+            'role="${SAGEMAKER_EXECUTION_ROLE_ARN:-${AMLAS_SAGEMAKER_ROLE_ARN:-arn:aws:iam::${AWS_ACCOUNT_ID}:role/${AMLAS_DEPLOYMENT_PREFIX:-amlas}-sagemaker-exec}}"\n'
+            'printf "RESOLVED_SAGEMAKER_ROLE_ARN=%s\\n" "$role"\n'
+            'printf "RESOLVED_DATA_ACQUISITION_IMAGE_URI=%s\\n" "${AMLAS_DATA_ACQUISITION_IMAGE_URI:-}"\n'
+            'printf "RESOLVED_DATA_ACQUISITION_SOURCE_COMMIT=%s\\n" "${AMLAS_DATA_ACQUISITION_SOURCE_COMMIT:-}"\n'
+        )
     (repo / "scripts/lib/deploy_agentcore_runtime.sh").write_text(helper)
     return repo, env
 
@@ -265,6 +299,7 @@ def test_existing_incompatible_role_rejected_before_main_cloud_writes(shell_work
     result = _setup(shell_workspace)
     assert result.returncode != 0
     records = [json.loads(s) for s in shell_workspace[2].read_text().splitlines()]
+    _assert_location_guard(records)
     assert not any(
         r["tool"] == "aws"
         and r["args"][:2]
@@ -282,6 +317,7 @@ def test_missing_replacement_key_preserves_existing_secret(shell_workspace):
     result = _setup(shell_workspace)
     assert result.returncode == 0, result.stdout + result.stderr
     records = [json.loads(s) for s in shell_workspace[2].read_text().splitlines()]
+    _assert_location_guard(records)
     assert not any(
         r["tool"] == "aws" and r["args"][:2] == ["secretsmanager", "put-secret-value"] for r in records
     )
@@ -293,6 +329,7 @@ def test_published_session_bucket_is_the_runtime_verified_bucket(shell_workspace
     result = _setup(shell_workspace)
     assert result.returncode == 0, result.stdout + result.stderr
     records = [json.loads(s) for s in shell_workspace[2].read_text().splitlines()]
+    _assert_location_guard(records)
     call = next(
         r
         for r in records

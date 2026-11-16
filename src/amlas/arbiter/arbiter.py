@@ -89,6 +89,13 @@ def grade(
         InvalidSubmissionError: if y_pred is malformed (agent-fixable — reinject).
         KeyError: if spec.task_type has no registered grader (code bug).
     """
+    if spec.task_type == "text_generation":
+        from .graders.coding import grade_coding
+
+        return grade_coding(
+            spec=spec, y_true=y_true, y_pred=y_pred, baseline_score=baseline_score,
+            phase_log=phase_log, llm_total_tokens=llm_total_tokens,
+        )
     t0 = time.monotonic()
     grader = get_grader(spec.task_type)
 

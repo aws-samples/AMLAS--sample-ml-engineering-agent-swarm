@@ -7,10 +7,22 @@ prompts at init time.
 
 from __future__ import annotations
 
+import math
 import re
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
+from pydantic_core import PydanticCustomError
+
+from .generation import GenerationPlan
 
 TaskType = Literal["classification", "regression", "segmentation", "detection", "text_generation"]
 SplitStrategy = Literal["random", "stratified", "time_based", "group"]
@@ -112,6 +124,9 @@ class SpecModel(BaseModel):
     # to None so every pre-Phase-10 spec keeps validating — backward-compatible.
     medallion: MedallionSpec | None = None
 
+    # Descriptive planning only. Legacy serialization omits an absent block.
+    generation: GenerationPlan | None = None
+
     # Body content (free-form domain notes from task_spec.md) — injected into system prompts
     domain_notes: str = ""
 
@@ -135,3 +150,37 @@ class SpecModel(BaseModel):
                 f"golden_dataset must be s3:// or an absolute/relative filesystem path; got: {v!r}"
             )
         return v
+
+
+    @model_serializer(mode="wrap")
+    def _serialize_optional_generation(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        data = handler(self)
+        if self.generation is None:
+            data.pop("generation", None)
+        return data
+
+    @model_validator(mode="after")
+    def _validate_generation_declaration(self) -> SpecModel:
+        plan = self.generation
+        if plan is None:
+            return self
+        if self.task_type != "text_generation" or self.primary_metric != plan.quality.metric:
+            # A closed error type (no input in the message) so the validator guidance keys on the type, not the text.
+            raise PydanticCustomError(
+                "generation_declaration_mismatch",
+                "coding generation planning requires task_type text_generation and primary_metric equal to "
+                "generation.quality.metric (the default is resolved_rate); for the fixed coding task set "
+                "primary_metric: pass_at_1 and generation.quality.metric: pass_at_1",
+            )
+        # Legacy metric bags remain unchanged when no generation block is present.
+        if set(self.baseline.model_extra or {}) - {self.primary_metric} or self.acceptance.model_extra:
+            raise ValueError("generation baseline/acceptance declarations contain unsupported extra fields")
+        score = self.baseline.model_dump().get(self.primary_metric)
+        if score is not None and (
+            type(score) not in (int, float) or not 0 <= score <= 1 or not math.isfinite(score)
+        ):
+            raise ValueError("generation baseline score must be null or a finite numeric value in [0, 1]")
+        measured = plan.baseline_measurement.state == "measured"
+        if measured != (score is not None):
+            raise ValueError("baseline score stays null until the declaration is measured")
+        return self

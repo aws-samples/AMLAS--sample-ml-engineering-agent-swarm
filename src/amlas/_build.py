@@ -105,6 +105,7 @@ def build_agent(
     tool_executor: Any | None = None,
     description: str | None = None,
     messages: Sequence[Any] | None = None,
+    conversation_manager: Any | None = None,
     config: Config | None = None,
 ) -> Agent:
     """Build a Strands Agent with Amlas canonical defaults.
@@ -150,6 +151,15 @@ def build_agent(
                call site byte-identical (they never pass it → single-turn as
                before); it is filtered out on any installed ``Agent`` that predates
                the ``messages`` kwarg (see ``_filter_agent_kwargs``).
+        conversation_manager: Optional Strands conversation manager for the Agent's
+               history. ``None`` (every caller except the normal-run chat backend)
+               leaves the key out of the Agent kwargs, so the installed SDK default
+               applies: ``SlidingWindowConversationManager`` with a 40-message window
+               on the locked Strands 1.65.0, as on 1.42.0 (this function never passes
+               the newer ``context_manager`` argument, which would replace that
+               default). When given, it is forwarded like any other kwarg
+               and reaches ``Agent`` only if the installed ``Agent.__init__``
+               declares it (see ``_filter_agent_kwargs``).
         config: Optional Config override (defaults to load_config()).
     """
     if model is None:
@@ -188,6 +198,9 @@ def build_agent(
         # build stays byte-identical (``Agent()`` starts with an empty history).
         "messages": list(messages) if messages else None,
     }
+    if conversation_manager is not None:
+        # Added only when named, so every default build keeps its exact kwarg set.
+        agent_kwargs["conversation_manager"] = conversation_manager
     # Universal error handling: this is the SHARED build path for ALL 7
     # sub-agents + the leads, so capturing an Agent-construction failure HERE funnels
     # every agent build error into the centralized ``ERROR_LOG`` with a per-agent

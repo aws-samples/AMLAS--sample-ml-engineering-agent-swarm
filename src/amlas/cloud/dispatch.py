@@ -151,9 +151,18 @@ class DispatchResult:
 
     @property
     def reached_training(self) -> bool:
-        """True if the stream shows the run getting past data staging into D2/ML."""
-        markers = {"data_staged", "run_started"}
-        return any(e.get("event") in markers for e in self.events)
+        """Report a named native training job in an observed running/completed state.
+
+        Data staging and orchestrator startup do not prove a trainer started.
+        This is job-progress evidence, not checkpoint or evaluation completion.
+        """
+        return any(
+            e.get("event") in {"training_job_started", "training_job_completed"}
+            and isinstance(e.get("job_name"), str)
+            and bool(e["job_name"].strip())
+            and e.get("job_status") in {"InProgress", "Completed"}
+            for e in self.events
+        )
 
 
 # ---------------------------------------------------------------------------

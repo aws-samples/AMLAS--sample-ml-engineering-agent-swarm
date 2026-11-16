@@ -91,13 +91,15 @@ cross-project security requirements, and the top-level verification contract.
 
 ## Local Contracts
 
+- Both source CI paths provision the dedicated hash-locked Qwen CPU test environment, five source-pinned public tokenizer/config/index metadata files and the one pinned public evaluation file before all Python tests. The evaluation file is verified by size and SHA256, and `environment.sh` exports its location as `AMLAS_TEST_HUMANEVAL_PARQUET`. The CPU overlay is separate from the fixed GPU/runtime lock, downloads no tensors and receives its own strict dependency audit. Source CI success does not qualify9B/GPU/native training.
+
 ### Repository authority
 
 - GitHub `main` is the authoritative public release tree.
 - GitLab is the development system of record for branches and review. GitLab `main`
   is subordinate to GitHub `main` and must have the same Git tree after each approved
-  release synchronization. Commit IDs are expected to differ because GitLab retains
-  development history while GitHub releases use fresh-root snapshots.
+  release synchronization. The tips of the two `main` branches have different commit
+  IDs because GitLab retains development history while each GitHub release is one commit.
 - GitLab `main` must match the exact human-approved GitHub `main` tree.
 - Development work occurs on GitLab feature branches. Do not develop directly on
   either platform's `main` branch.
@@ -105,11 +107,14 @@ cross-project security requirements, and the top-level verification contract.
 ### Release sequence
 
 1. Branch from the current GitLab `main`.
-2. Prepare a public-release candidate and run the complete sanitization and
-   verification suite.
+2. Prepare a public-release candidate and pass the complete sanitization,
+   existing-feature regression, and core functional checks below on that exact candidate.
 3. Present the exact candidate tree hash and material scan results for human approval.
-4. After explicit approval, publish that exact tree to GitHub `main` as a fresh-root
-   commit using an exact force-with-lease.
+4. After explicit approval, publish that exact tree to GitHub `main` as one new commit
+   on top of the current GitHub `main`, using a plain push that is never forced. The
+   new release commit must have the approved release tree. The first GitHub release
+   was a root commit, and every later GitHub release adds one commit. Undo a wrong
+   release with a revert commit.
 5. Synchronize GitLab `main` to the approved GitHub tree through a GitLab merge
    request, preserving all GitLab parents, branches, tags, and historical commits.
 6. Fetch both remotes and prove that the two `main` refs resolve to the same Git tree.
@@ -120,6 +125,47 @@ prepare dependency changes on GitLab branches for the same approval process.
 
 Never publish to GitHub first and sanitize afterward. Never merge the GitLab
 synchronization before the approved GitHub tree is available.
+
+### Changes that land on GitHub first
+
+- Keep GitLab branch `mirror/github-main` at exactly the commits of GitHub `main`, and
+  advance `mirror/github-main` only forward.
+- Bring a change that has landed on GitHub first into GitLab `main` through a merge request.
+- The merge commit for a GitHub-first recovery merge request must have GitLab `main` as
+  first parent and GitHub `main` as second parent, and the merge commit's tree must equal
+  the tree of GitHub `main`.
+- Preserve all original commits with their authors and commit IDs without rewriting any
+  commits. After a GitHub-first recovery merge, GitLab `main` contains GitHub `main`.
+
+### GitHub release regression and core-functionality gate
+
+- Before every GitHub release, including publication or synchronization to public
+  `main`, run the complete required regression suite on the exact sanitized
+  candidate and verify that existing supported features still work. Include the
+  normal CLI/API/TUI smoke paths and affected integrations; retain existing tests
+  and required quality and safety thresholds. Focused tests alone do not qualify a release.
+- Small documentation, artwork, metadata, and narrowly scoped dependency updates
+  do not require a full deployed ML rerun. Run relevant code tests and
+  dependency/security checks; for MCP or other SDK changes, include the affected
+  integration and compatibility tests. Preserve the required native CI gates and
+  record why the scope qualifies for this exception.
+- Prove the frozen core workflow through the normal deployed client path on that
+  candidate: one fresh prompt completes research and specification, licensed data
+  preparation, full one-model training, and executable paired coding evaluation.
+  A smoke training job, private fixture, manual handoff, or component test does not
+  replace the required full workflow. Report measured base/tuned results; additional
+  tuning and quality gains remain separate milestones.
+- Keep release evidence in the sibling internal development-documentation repository.
+  Record the exact candidate commit/tree, deployed image digests, commands, results,
+  native job/session IDs, and manual interventions. The accepted core run must require
+  no operator routing or code fixes between stages. Bind every result to the actual
+  candidate/artifact tested; earlier-version evidence does not qualify a new release.
+- Any failed, missing, incomplete, or unverifiable required check blocks publication.
+  Fix the regression, repeat the required checks, and update the release issue before
+  seeking approval. A later check after GitHub publication does not satisfy this gate.
+- Preserve the existing sanitization and exact-tree human approval requirements.
+  Passing checks does not itself authorize a GitHub write. Keep the frozen core scope;
+  optional serving, broader MLOps, architecture changes and tuning are backlog work.
 
 ### Public-release sanitization
 
@@ -149,9 +195,23 @@ synchronization before the approved GitHub tree is available.
 
 - Keep this repository focused on source code, regression tests, AGENTS.md
   self-documentation, and enhancements to its existing user documentation.
-- Keep changelogs, explainers, analysis, audit evidence, and launch materials in
-  the sibling internal development-documentation repository. Do not add those
-  deliverables or unnecessary new documentation to the public source tree.
+- Keep explainers, analysis, audit evidence, launch materials, and all changelogs
+  except the root `CHANGELOG.md` in the sibling internal development-documentation
+  repository. Do not add those deliverables or unnecessary new documentation to the
+  public source tree.
+
+### Changelog upkeep
+
+- Add one line under `## [Unreleased]` in the root `CHANGELOG.md` for every user- or
+  maintainer-visible change, in the same change.
+- Follow Keep a Changelog 1.1.0 with Added, Changed, Deprecated, Removed and Fixed groups,
+  shown only when they hold a line.
+- Use one physical line per bullet, in past tense, naming the option, command, file or behaviour.
+- At release, move Unreleased lines under a `## [YYYY-MM-DD]` heading for the release date,
+  newest first, while the package version stays one string.
+- Include no work-item identifiers, person names, account numbers, host names, machine paths
+  or dates in lines.
+- Keep the shape pinned by `tests/test_changelog_shape.py`.
 
 ### History preservation
 
@@ -161,10 +221,61 @@ synchronization before the approved GitHub tree is available.
 - Verify clean, aligned Cloud Desktop and durable mirrors at completion.
 - Do not force-push, delete, or rewrite GitLab branches or tags as part of synchronization.
 - A GitLab synchronization commit must retain the previous GitLab `main` as an ancestor.
-- GitHub history remains intentionally independent and contains only approved
-  fresh-root public snapshots.
+- GitHub `main` history is never rewritten or force-pushed, and the first GitHub
+  release is the root commit of GitHub `main`. Each later GitHub release adds one
+  commit above all commits already on GitHub `main`.
+
+### Dependency security compatibility
+
+- Keep MCP Python SDK on the compatible1.x line with manifest floor `>=1.30.0,<2`;
+  CVE-2026-59951/GHSA-84m7-p3x7-pcfv fixes bounded StreamableHTTP session retention.
+  The committed lock selects the first fixed1.x release with official artifact hashes.
+  Security/SDK verification must actually import that fixed version in its isolated
+  environment; a changed lock with a stale venv does not prove compatibility.
 
 ### Deployment and runtime configuration
+
+- The paired CPU image has no persistent `PYTHONPATH` or caller loader hint. Its
+  build-only closure check uses isolated Python with explicit `-B` and one fixed `/app/src` insertion;
+  the runtime wrapper inserts that path only after the permanent native OS guards.
+  Actual-image startup verification must use its normal compiled entrypoint and
+  real baked environment, exact measured capability ceiling, root-owned Processing
+  parent and an empty service-style output mount. Entry overrides/import probes
+  and environment-cleared fixtures cannot qualify startup compatibility.
+
+
+- The Qwen image packs the existing pure coding-generation module/profile in a minimal root-owned namespace. Its fixed generate operation reuses guarded startup; training/reload caps and policies remain intact. Native generation/execution admission is separate from image construction.
+
+- `Dockerfile.model-acquisition` uses the same locked minimal byte-transport closure
+  and fixed native initializer, with source-owned `/app/acquire_model.py`. It has
+  no numerical, agent or SDK dependencies, model parser, pickle or remote code.
+  The source catalog alone selects raw files; missing native qualification or
+  unknown provider observations refuse. Building this image never grants admission.
+  Its build-only official pip26.2 wheel is checksum/size pinned and mounted readonly
+  from a separate stage. The bootstrap uses only that verified local wheel without
+  indexes/dependencies; patched pip precedes binary-only locked transport installation.
+  setuptools/wheel are removed before installation, pip afterward; final distributions
+  retain exactly seven locked schema/transport packages plus digest-pinned base packaging.
+  Distribution and importable installer paths must both be absent in the actual image.
+  This cleanup grants no managed-worker or model-training admission.
+
+- `Dockerfile.qwen_sft` is a dedicated AMD64 fixed Qwen candidate with its hashed
+  training lock, root-owned worker/core/pure schemas, explicit native initializer
+  feature and fixed `qwen-sft` profile. USERroot starts only the static OS initializer;
+  permanent worker/drop, FD3, real GPU/mount/provider/isolation and dependency/image
+  closure proofs are separate required native gates. The pure namespace includes
+  CommitPack replay/profile and its canonical preparation dependency; executable
+  import tests verify the Docker-declared closure. No agent/SDK or repository code,
+  arbitrary entrypoint, optimizer/RNG pickle or admission marker is included.
+
+- `Dockerfile.inspection` builds a locked AMD64 image whose root startup executes
+  only the fixed static Rust initializer. It repairs only the empty fixed output
+  directory, permanently drops to UID/GID10001 with empty groups and zero active
+  capabilities, then executes fixed root-owned worker/schema code with no-new-privileges.
+  Its explicit `sagemaker-native-v1` build retains only the fixed verified native
+  bounding ceiling; the original zero-bounding path remains separately tested. No SDK,
+  data or agent import occurs in privileged startup. Native admission, release
+  propagation and image publication remain separate gates.
 
 - `scripts/setup.sh` accepts `--profile`, `--account-id`, and `--region`. Explicit
   selector flags override `.env`; accept a selected local profile or the standard
@@ -212,6 +323,16 @@ synchronization before the approved GitHub tree is available.
   installs retain their normal package source. These two data variants are mutually
   exclusive in uv. Preserve equivalent non-Torch data capabilities and prove native ARM64
   CPU execution, package imports, health, and image-size accounting before release.
+- `Dockerfile.processing` builds a separate acquisition-only image from the
+  canonical lockfile's Pydantic/PyYAML/dotenv dependency closure, without agent,
+  numerical or training dependencies. Require a full source commit build argument
+  and publish its verified OCI revision plus immutable digest. The acquisition
+  default `ml.m5.xlarge` requires a linux/amd64 image; runtime ARM images cannot
+  substitute for it. The static OS initializer starts with only fixed output
+  initialization authority, changes the existing empty service output in place,
+  and irreversibly drops to UID/GID10001 before the guarded Python workload.
+  Source/interpreter/stdlib/launcher remain root-owned and nonwritable to workers.
+  Its guarded output is data-only and remains untrusted input.
 - Runtime deployment must propagate every required IAM/control failure. Capture the accepted
   version, verify exact image/environment/role/network/protocol, pin a discovered or explicitly
   selected `AGENTCORE_PLATFORM_VERSION`, require MMDSv2 on update, and verify DEFAULT endpoint
@@ -286,6 +407,36 @@ synchronization before the approved GitHub tree is available.
   ownership, preserving reused resources and bootstrap. Pending KMS deletion
   is distinct from confirmed absence.
 
+- `Dockerfile.case-freeze` keeps `/opt/ml/processing` and all input ancestors
+  root-owned and nonwritable; only its fixed output directory receives worker
+  ownership with0700 mode. Preserve the native initializer, permanent drop and output-FD
+  contracts. The actual image filesystem ownership probe uses no worker/data
+  execution; source or temporary-container controls do not qualify a rebuilt
+  image, SageMaker-created input mounts or successful native case publication.
+
+- `Dockerfile.preparation` builds a pinned AMD64 native initializer and fixed
+  preparation worker/core/identity/codec guest with only the canonical lockfile's
+  hash-verified PyArrow binary closure. JSONL v1 and pinned Open-SWE Parquet v2
+  are closed source-owned profiles; no guest SDK, model loader or remote code.
+  USER root initializes
+  only the fixed output FD, then the shared helper permanently drops before Python.
+  Missing image/admission remains unconfigured; source/image tests are not native
+  admission, prepared task data, training, quality evaluation or restart durability.
+
+- `Dockerfile.preparation` includes only fixed root-owned CommitPack profile and
+  shared v3 replay modules alongside unchanged legacy profiles and locked parser
+  closure. It adds no model/SDK/remote-loader dependency or privilege selector.
+  Image build/publication/native qualification remain independent release gates.
+  The build-only official pip26.2 wheel reuses the checksum/size-pinned readonly
+  bootstrap, with no index/dependency resolution for installer replacement.
+  Patched pip precedes unchanged binary-only locked PyArrow installation;
+  setuptools/wheel are removed beforehand and pip afterward. Actual final
+  runtime distributions retain only locked PyArrow plus digest-pinned base
+  packaging; installer distributions and import paths must both be absent.
+  Cleanup does not erase historical base-layer bytes or grant native admission.
+
+- `Dockerfile.coding-pair` is a fixed AMD64 CPU Processing broker recipe. Its binary-only hashed import closure is selected from the committed uv.lock by the source-owned requirements extractor; it contains no model tensors or runtime-fetched source. Root-owned code and UID/GID10001 precede the fixed worker entrypoint. Image construction/publishing and unprivileged/credential-free-child qualification remain AWS-account-only gates.
+
 ## Work Guidance
 
 - Use test-driven development for behavior and governance changes.
@@ -305,15 +456,22 @@ Run from the repository root with Python 3.11 and supported Node.js 22. Set
 ```bash
 mkdir -p "$TMPDIR"
 uv sync --frozen --extra dev --extra security --extra cdk --extra agents --extra runtime-cpu
+bash scripts/provision_qwen_cpu_tests.sh "$TMPDIR/qwen-cpu-tests"
+source "$TMPDIR/qwen-cpu-tests/environment.sh"
 uv run --frozen --no-sync python -m pytest -q tests
 uv run --frozen --no-sync python scripts/verify_repository_governance.py --scan-tree --ref HEAD
 uv run --frozen --no-sync ruff check src scripts infra tests
 uv run --frozen --no-sync bandit -c pyproject.toml -r src scripts infra -lll
 uv export --frozen --format requirements-txt --no-emit-project > "$TMPDIR/requirements.txt"
 uv run --frozen --no-sync pip-audit --disable-pip -r "$TMPDIR/requirements.txt" --strict
+uv run --frozen --no-sync pip-audit -r src/amlas/training/qwen_sft.requirements.lock --strict --disable-pip --vulnerability-service osv
 git ls-files -z | xargs -0 uv run --frozen --no-sync \
   detect-secrets-hook --baseline .secrets.baseline
 ```
+
+The provisioning script installs the CPU test closure, pinned metadata and pinned public
+evaluation file; `environment.sh` exports their locations, including
+`AMLAS_TEST_HUMANEVAL_PARQUET`, for pytest.
 
 After both remote `main` refs have been fetched:
 
@@ -325,6 +483,18 @@ python scripts/verify_repository_governance.py \
 Also run wheel and source-distribution builds, inspect package contents, compile Python,
 check shell syntax and CI YAML, and run the non-mutating infrastructure checks relevant
 to changed code. No unresolved critical/high dependency or secret finding may pass.
+For `processing_bootstrap`, use the managed image's digest-pinned Rust1.90.0
+compiler and exact-toolchain formatter. Run `cargo fmt --all --check`,
+`cargo test --workspace --locked --offline` and
+`cargo build --release --locked --offline --target x86_64-unknown-linux-musl`
+from that directory with `CARGO_TARGET_DIR` outside the source checkout.
+Run tests with `RUST_TEST_THREADS=1`; in a container, drop SETPCAP, NET_RAW, MKNOD
+and SETFCAP and set the open-file limit to 65536. The boundary tests need Linux 5.13
+or newer for close_range and Landlock. The public GitHub workflow runs all of these
+checks on every run. The GitLab job runs all of them on a runner with Linux 5.13 or
+newer; on an older kernel, it prints one line naming the kernel, runs the format check
+and both release builds, and skips the two `cargo test` commands. Controlled initializer
+image tests and native managed-worker admission remain separate gates.
 
 Tree equality, clean scans, and passing tests are necessary but do not replace human
 approval for a GitHub publication.
@@ -345,7 +515,13 @@ approval for a GitHub publication.
 | `bin/AGENTS.md` | CLI/TUI shell entry points |
 | `infra/AGENTS.md` | Resource/stack configuration and synthesis |
 | `prompts/AGENTS.md` | Checked-in agent instructions |
+| `processing_bootstrap/AGENTS.md` | Fixed OS-only Processing worker initialization |
 | `scripts/AGENTS.md` | Setup, runtime lifecycle, teardown and verification helpers |
 | `specs/AGENTS.md` | Task/acceptance examples |
 | `src/AGENTS.md` | Application/package source contracts |
 | `tests/AGENTS.md` | Shipped regression and governance checks |
+
+Source distribution excludes both root AGENTS.md and its CLAUDE.md alias. Root
+Python tests remain excluded while legitimate processing_bootstrap test sources
+remain packaged. Package inspection requires source-byte parity and closed link
+targets; a successful build alone is not package-content acceptance.

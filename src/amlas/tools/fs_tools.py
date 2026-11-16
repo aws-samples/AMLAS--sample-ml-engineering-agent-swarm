@@ -41,6 +41,7 @@ helper so importing the module stays cheap and side-effect-free.
 
 from __future__ import annotations
 
+import codecs
 import fnmatch
 from datetime import UTC, datetime
 from pathlib import Path
@@ -81,6 +82,7 @@ __all__ = [
 # ─── Tunable caps (design §6.1) ────────────────────────────────────────────────
 
 MAX_READ_BYTES = 262_144          # 256 KB hard cap for read_file
+READ_RESULT_BYTES = 10_000        # per-result content cap; real-model test runs saw 13.9 KB and 22.7 KB results
 _BINARY_SNIFF_BYTES = 8_192       # bytes inspected for NUL / non-UTF-8
 DEFAULT_MAX_RESULTS = 500         # list_directory / find_files entry cap
 DEFAULT_MAX_HITS = 200            # search_in_files match cap
@@ -151,7 +153,8 @@ def _looks_binary(raw: bytes) -> bool:
     if b"\x00" in raw:
         return True
     try:
-        raw.decode("utf-8")
+        # final=False tolerates a multi-byte character cut by the end of the sniff window.
+        codecs.getincrementaldecoder("utf-8")().decode(raw, final=False)
     except UnicodeDecodeError:
         return True
     return False
@@ -484,7 +487,37 @@ def search_in_files(
 # ─── 4. read_file ────────────────────────────────────────────────────────────────
 
 
-def _read_file_remote(path: str, cap: int, head: int | None, tail: int | None) -> dict[str, Any]:
+def _page_content(content: str, offset: int) -> tuple[str, dict[str, Any]]:
+    """Return at most READ_RESULT_BYTES of ``content`` from byte ``offset`` with explicit page markers.
+
+    A page ends on a line boundary when its window holds a newline and never splits a UTF-8
+    character; ``next_offset`` is the byte offset for the next call, or None at the end.
+    """
+    data = content.encode("utf-8")
+    total = len(data)
+    start = min(offset, total)
+    end = min(start + READ_RESULT_BYTES, total)
+    if end < total:
+        newline = data.rfind(b"\n", start, end)
+        if newline >= start:
+            end = newline + 1
+        else:
+            while end > start and (data[end] & 0xC0) == 0x80:
+                end -= 1
+            if end == start:
+                end = min(start + READ_RESULT_BYTES, total)
+    markers = {
+        "content_offset": start,
+        "content_returned_bytes": end - start,
+        "content_total_bytes": total,
+        "next_offset": end if end < total else None,
+    }
+    return data[start:end].decode("utf-8", errors="ignore"), markers
+
+
+def _read_file_remote(
+    path: str, cap: int, head: int | None, tail: int | None, offset: int = 0
+) -> dict[str, Any]:
     """Remote (S3/HTTP) ``read_file``: capped byte read via ``pathref.open_bytes``.
 
     Applies the SAME 256 KB byte cap as the local path (via ``open_bytes(max_bytes=cap)``),
@@ -524,13 +557,15 @@ def _read_file_remote(path: str, cap: int, head: int | None, tail: int | None) -
         if content:
             content += "\n"
 
+    content, page = _page_content(content, offset)
     return _ok(
         path=path,
         size=bytes_read,
         bytes_read=bytes_read,
-        truncated=truncated,
+        truncated=truncated or page["next_offset"] is not None,
         is_binary=False,
         content=content,
+        **page,
     )
 
 
@@ -541,10 +576,13 @@ def read_file(
     max_bytes: int = MAX_READ_BYTES,
     head: int | None = None,
     tail: int | None = None,
+    offset: int = 0,
 ) -> dict[str, Any]:
     """Safely read a small TEXT file (headers, README, spec, config) — capped.
 
-    Reads at most ``max_bytes`` (256 KB default) and refuses binary files. With
+    Reads at most ``max_bytes`` (256 KB default) and refuses binary files. Each result
+    returns at most 10 KB of content; when ``next_offset`` is not null the content is
+    partial, so call again with ``offset=next_offset`` only if you need the rest. With
     ``head=N``/``tail=N`` returns the first/last N lines. This is for SMALL text
     peeks only — for multi-MB CSV data, discover the file then use
     ``describe_dataset``/``load_dataset`` instead of reading it here. Also accepts
@@ -556,11 +594,14 @@ def read_file(
         max_bytes: Hard cap on bytes read (never exceeds 256 KB even if larger).
         head: If set, return only the first N lines.
         tail: If set, return only the last N lines.
+        offset: Byte offset into the selected content; pass the previous next_offset.
     """
     cap = min(max_bytes, MAX_READ_BYTES)
+    if type(offset) is not int or offset < 0:
+        return _err(path, "offset must be a non-negative integer")
 
     if classify(path) is not PathScheme.LOCAL:
-        return _read_file_remote(path, cap, head, tail)
+        return _read_file_remote(path, cap, head, tail, offset)
 
     try:
         real = _resolve_within_sandbox(path)
@@ -633,13 +674,15 @@ def read_file(
         if content:
             content += "\n"
 
+    content, page = _page_content(content, offset)
     return _ok(
         path=str(real),
         size=size,
         bytes_read=bytes_read,
-        truncated=truncated,
+        truncated=truncated or page["next_offset"] is not None,
         is_binary=False,
         content=content,
+        **page,
     )
 
 

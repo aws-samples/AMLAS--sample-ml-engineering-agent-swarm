@@ -12,6 +12,12 @@ Inherits [../AGENTS.md](../AGENTS.md); this document owns the files directly in 
 
 - `dispatch.py:resolve_runtime_arn` — Entry-point resolver: explicit → env → SSM ``/amlas/agentcore-runtime-arn``.
 - `dispatch.py:resolve_session_bucket` — Entry-point resolver: explicit → env → SSM ``/amlas/session-bucket`` (FIX-13).
+- `DispatchResult.reached_training` requires a named training job with an observed
+  running/completed status; staged data and run startup do not count as training.
+- Staged-label verification uses the data-only NumPy loader and counts logical
+  CSV records, including multiline code/text cells.
+- Label writers normalize primitive values without pickle; legacy object-array
+  recovery is forbidden in the runtime process.
 - `sandbox_staging.py:build_write_file_code` — Return Python that writes ``content`` to ``target_path`` inside the sandbox.
 - `sandbox_staging.py:stage_files_into_sandbox` — Write each ``{sandbox_target_path: local_source_path}`` into the sandbox.
 - `secrets.py:resolve_tavily_key` — Fetch the Tavily key from Secrets Manager. Returns None if absent/empty.

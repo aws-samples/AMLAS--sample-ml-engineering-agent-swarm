@@ -36,18 +36,21 @@ irreversible/expensive → gated by the M1 approval gate before they ever run (d
 from __future__ import annotations
 
 import csv
+import logging
 import os
 import re
 import tempfile
 import threading
 import uuid
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar
 
 from amlas.config._env_compat import env_with_compat
 
 from ...config.aws_region import resolve_aws_client_region, resolve_aws_region
+from ...config.externalized import resolve_env_snapshot
 from ...config.sagemaker_images import validate_image_region, xgboost_image
 from ..ports import DeploymentBackend
 from ..registry import register_adapter
@@ -56,12 +59,39 @@ from ._util import _csv_safe_cell
 
 # Metric-name substrings whose objective is minimized — informational for sizing.
 _SAFE_NAME = re.compile(r"[^a-zA-Z0-9]+")
+_LOGGER = logging.getLogger(__name__)
 
 
 def _sanitize(prefix: str, raw: str) -> str:
     """A SageMaker-safe resource name (alnum + hyphen, no underscores)."""
     base = _SAFE_NAME.sub("-", raw or prefix).strip("-")[:24] or prefix
     return f"{prefix}-{base}-{uuid.uuid4().hex[:8]}"
+
+
+@dataclass(frozen=True)
+class _ObservedEndpointRef(EndpointRef):
+    """Native/local observation DATA; the shared EndpointRef schema stays intact."""
+
+    status: str = "Unknown"
+
+
+def _endpoint_arn_identity(value: Any, name: str, region: str | None) -> tuple[str, str, str] | None:
+    """Validate only endpoint identity DATA, never IAM or hosting admission."""
+    if type(value) is not str:
+        return None
+    parts = value.split(":", 5)
+    if (
+        len(parts) != 6
+        or parts[0] != "arn"
+        or parts[1] not in {"aws", "aws-cn", "aws-us-gov"}
+        or parts[2] != "sagemaker"
+        or not re.fullmatch(r"[a-z]{2}(?:-[a-z]+)+-[0-9]+", parts[3])
+        or not re.fullmatch(r"[0-9]{12}", parts[4])
+        or parts[5] != f"endpoint/{name}"
+        or (region is not None and parts[3] != region)
+    ):
+        return None
+    return parts[1], parts[3], parts[4]
 
 
 def _trusted_model_roots() -> list[Path]:
@@ -138,8 +168,14 @@ class LocalServeBackend:
     _LOCK = threading.Lock()
 
     # ── package (T-DEPLOY-09) ───────────────────────────────────────────────────
-    def package(self, *, model_ref: ModelRef, image: str | None = None,
-                inference_code: str | None = None, env: dict[str, Any] | None = None) -> PackageRef:
+    def package(
+        self,
+        *,
+        model_ref: ModelRef,
+        image: str | None = None,
+        inference_code: str | None = None,
+        env: dict[str, Any] | None = None,
+    ) -> PackageRef:
         """Capture a deployable package ref for ``model_ref`` (records the predict source)."""
         arn = f"local:package:{uuid.uuid4().hex[:10]}"
         with self._LOCK:
@@ -149,12 +185,23 @@ class LocalServeBackend:
                 "inference_code": inference_code,
                 "env": dict(env or {}),
             }
-        return PackageRef(arn=arn, group=str(model_ref.algo or "local-model"), version=1,
-                          approval_status="Packaged", metrics=dict(model_ref.metrics or {}))
+        return PackageRef(
+            arn=arn,
+            group=str(model_ref.algo or "local-model"),
+            version=1,
+            approval_status="Packaged",
+            metrics=dict(model_ref.metrics or {}),
+        )
 
     # ── deploy (T-DEPLOY-01, mode=) ─────────────────────────────────────────────
-    def deploy(self, *, model_ref: ModelRef, mode: str = "realtime",
-               resources: dict[str, Any] | None = None, autoscaling: dict[str, Any] | None = None) -> EndpointRef:
+    def deploy(
+        self,
+        *,
+        model_ref: ModelRef,
+        mode: str = "realtime",
+        resources: dict[str, Any] | None = None,
+        autoscaling: dict[str, Any] | None = None,
+    ) -> EndpointRef:
         """Bind a real predict callable into a named local endpoint (any ``mode``)."""
         res = dict(resources or {})
         name = res.get("endpoint_name") or _sanitize("local-ep", model_ref.algo or "model")
@@ -173,10 +220,14 @@ class LocalServeBackend:
                 "version": 1,
                 "autoscaling": dict(autoscaling or {}),
             }
-        return EndpointRef(name=name, arn=f"local:endpoint:{name}", mode=mode, backend="local")
+        return _ObservedEndpointRef(
+            name=name, arn=f"local:endpoint:{name}", mode=mode, backend="local", status="InService"
+        )
 
     # ── invoke (T-DEPLOY-02) ────────────────────────────────────────────────────
-    def invoke(self, *, endpoint: EndpointRef, payload: Any, target_model: str | None = None) -> dict[str, Any]:
+    def invoke(
+        self, *, endpoint: EndpointRef, payload: Any, target_model: str | None = None
+    ) -> dict[str, Any]:
         """Invoke the local endpoint and return a REAL ``{"prediction": ...}``.
 
         For a ``streaming`` endpoint (G3) the in-process server realizes response-streaming
@@ -201,38 +252,67 @@ class LocalServeBackend:
             for row in rows:
                 stream.extend(self._to_list(predict([row])))
             single = stream[0] if len(stream) == 1 else stream
-            return {"prediction": single, "predictions": stream, "stream": stream,
-                    "streamed": True, "endpoint": endpoint.name, "mode": "streaming",
-                    "target_model": target_model, "backend": "local"}
+            return {
+                "prediction": single,
+                "predictions": stream,
+                "stream": stream,
+                "streamed": True,
+                "endpoint": endpoint.name,
+                "mode": "streaming",
+                "target_model": target_model,
+                "backend": "local",
+            }
 
         preds = predict(rows)
         preds_list = self._to_list(preds)
         single = preds_list[0] if len(preds_list) == 1 else preds_list
-        return {"prediction": single, "predictions": preds_list, "endpoint": endpoint.name,
-                "mode": ep["mode"], "target_model": target_model, "backend": "local"}
+        return {
+            "prediction": single,
+            "predictions": preds_list,
+            "endpoint": endpoint.name,
+            "mode": ep["mode"],
+            "target_model": target_model,
+            "backend": "local",
+        }
 
     # ── canary / blue-green (T-DEPLOY-03) ───────────────────────────────────────
-    def update_canary(self, *, endpoint: EndpointRef, new_config: dict[str, Any],
-                      canary_pct: int, alarms: list[str] | None = None, mode: str = "canary") -> dict[str, Any]:
+    def update_canary(
+        self,
+        *,
+        endpoint: EndpointRef,
+        new_config: dict[str, Any],
+        canary_pct: int,
+        alarms: list[str] | None = None,
+        mode: str = "canary",
+    ) -> dict[str, Any]:
         """Shift the endpoint to ``new_config``'s predictor, keeping the prior in history."""
         ep = self._ENDPOINTS.get(endpoint.name)
         if ep is None:
             raise RuntimeError(f"local endpoint {endpoint.name!r} not deployed")
         new_ref = new_config.get("model_ref")
-        new_predict = self._resolve_predict(new_ref, new_config) if new_ref is not None else (
-            new_config.get("predict_fn") or ep["predict"]
+        new_predict = (
+            self._resolve_predict(new_ref, new_config)
+            if new_ref is not None
+            else (new_config.get("predict_fn") or ep["predict"])
         )
         with self._LOCK:
             ep["history"].append({"version": ep["version"], "predict": ep["predict"]})
             ep["predict"] = new_predict
             ep["version"] += 1
-        return {"deployment_status": "Completed", "strategy": mode, "canary_pct": int(canary_pct),
-                "endpoint": endpoint.name, "version": ep["version"], "alarms": list(alarms or []),
-                "backend": "local"}
+        return {
+            "deployment_status": "Completed",
+            "strategy": mode,
+            "canary_pct": int(canary_pct),
+            "endpoint": endpoint.name,
+            "version": ep["version"],
+            "alarms": list(alarms or []),
+            "backend": "local",
+        }
 
     # ── batch transform (T-DEPLOY-04) ───────────────────────────────────────────
-    def batch_score(self, *, model_ref: ModelRef, input_uri: str, output_uri: str,
-                    resources: dict[str, Any] | None = None) -> JobHandle:
+    def batch_score(
+        self, *, model_ref: ModelRef, input_uri: str, output_uri: str, resources: dict[str, Any] | None = None
+    ) -> JobHandle:
         """Score every row of the ``input_uri`` CSV locally and write predictions."""
         predict = self._resolve_predict(model_ref, dict(resources or {}))
         rows: list[list[float]] = []
@@ -254,8 +334,11 @@ class LocalServeBackend:
             writer.writerow(["prediction"])
             for p in preds:
                 writer.writerow([_csv_safe_cell(p)])
-        return JobHandle(id=_sanitize("local-batch", model_ref.algo or "score"), backend="local",
-                         extra={"output_uri": str(out), "n_scored": len(preds), "status": "Completed"})
+        return JobHandle(
+            id=_sanitize("local-batch", model_ref.algo or "score"),
+            backend="local",
+            extra={"output_uri": str(out), "n_scored": len(preds), "status": "Completed"},
+        )
 
     # ── rollback (T-DEPLOY-07) ──────────────────────────────────────────────────
     def rollback(self, *, endpoint: EndpointRef, to_version: str | None = None) -> dict[str, Any]:
@@ -264,15 +347,23 @@ class LocalServeBackend:
         if ep is None:
             raise RuntimeError(f"local endpoint {endpoint.name!r} not deployed")
         if not ep["history"]:
-            return {"status": "NoPriorVersion", "endpoint": endpoint.name, "restored_version": ep["version"],
-                    "backend": "local"}
+            return {
+                "status": "NoPriorVersion",
+                "endpoint": endpoint.name,
+                "restored_version": ep["version"],
+                "backend": "local",
+            }
         with self._LOCK:
             prior = ep["history"].pop()
             ep["predict"] = prior["predict"]
             restored = prior["version"]
             ep["version"] = restored
-        return {"status": "RolledBack", "endpoint": endpoint.name, "restored_version": restored,
-                "backend": "local"}
+        return {
+            "status": "RolledBack",
+            "endpoint": endpoint.name,
+            "restored_version": restored,
+            "backend": "local",
+        }
 
     # ── delete (T-DEPLOY-08) ────────────────────────────────────────────────────
     def delete(self, *, endpoint: EndpointRef) -> dict[str, Any]:
@@ -282,16 +373,32 @@ class LocalServeBackend:
         return {"status": "Deleted" if existed else "NotFound", "endpoint": endpoint.name, "backend": "local"}
 
     # ── inference-config sizing (T-DEPLOY-11) ───────────────────────────────────
-    def recommend_config(self, *, model_ref: ModelRef, sample: str,
-                         sla: dict[str, Any] | None = None) -> list[SizingRec]:
+    def recommend_config(
+        self, *, model_ref: ModelRef, sample: str, sla: dict[str, Any] | None = None
+    ) -> list[SizingRec]:
         """Return a small deterministic local sizing shortlist (no AWS)."""
         sla = sla or {}
         # A tiny deterministic catalog ordered cheapest-first; latency/throughput are
         # heuristic estimates (the managed adapter returns Inference Recommender data).
         catalog = [
-            SizingRec(instance_type="ml.t2.medium", est_cost_per_hour=0.065, est_latency_ms=120.0, est_throughput=80.0),
-            SizingRec(instance_type="ml.m5.large", est_cost_per_hour=0.134, est_latency_ms=45.0, est_throughput=320.0),
-            SizingRec(instance_type="ml.c5.xlarge", est_cost_per_hour=0.238, est_latency_ms=22.0, est_throughput=640.0),
+            SizingRec(
+                instance_type="ml.t2.medium",
+                est_cost_per_hour=0.065,
+                est_latency_ms=120.0,
+                est_throughput=80.0,
+            ),
+            SizingRec(
+                instance_type="ml.m5.large",
+                est_cost_per_hour=0.134,
+                est_latency_ms=45.0,
+                est_throughput=320.0,
+            ),
+            SizingRec(
+                instance_type="ml.c5.xlarge",
+                est_cost_per_hour=0.238,
+                est_latency_ms=22.0,
+                est_throughput=640.0,
+            ),
         ]
         sla_ms = sla.get("latency_sla_ms")
         if sla_ms:
@@ -299,10 +406,18 @@ class LocalServeBackend:
         return catalog
 
     # ── edge / embedded deploy (T-DEPLOY-10b, G3) ───────────────────────────────
-    def deploy_edge(self, *, model_ref: ModelRef, compile_output: dict[str, Any] | None = None,
-                    target_device: str = "jetson_nano", framework: str = "PYTORCH",
-                    greengrass_target: str | None = None, component_name: str | None = None,
-                    bundle_dir: str | None = None, data_shape: str = '{"input":[1,3,224,224]}') -> dict[str, Any]:
+    def deploy_edge(
+        self,
+        *,
+        model_ref: ModelRef,
+        compile_output: dict[str, Any] | None = None,
+        target_device: str = "jetson_nano",
+        framework: str = "PYTORCH",
+        greengrass_target: str | None = None,
+        component_name: str | None = None,
+        bundle_dir: str | None = None,
+        data_shape: str = '{"input":[1,3,224,224]}',
+    ) -> dict[str, Any]:
         """Bundle a compiled edge artifact locally (the offline equivalent of Neo→Edge→Greengrass).
 
         The local server has no SageMaker Neo / Edge Manager / Greengrass, so it realizes the edge
@@ -445,15 +560,13 @@ class SageMakerDeploymentBackend:
         # a real ``create_model`` / IR / Neo job rejects the ``000000000000`` placeholder with
         # ``RoleArn: Cross-account pass role is not allowed`` (its account never matches the
         # caller's). Resolve the SageMaker exec role from the explicit arg → the SEC-01
-        # env (the ``AMLAS_SAGEMAKER_ROLE_ARN`` environment setting) → the placeholder.
-        # So when the managed (``DEPLOYMENT_BACKEND=sagemaker``) adapter is auto-built by the
-        # registry's no-arg factory, it still passes a real same-account role on the live path.
-        import os as _os
+        # shared pure ENV selection → the existing invalid placeholder. Explicit
+        # constructor selection wins; the canonical role precedes its alias.
+        # Construction never resolves SSM/profile data or creates SDK clients.
         self._region = region
         self._role = (
             role_arn
-            or _os.environ.get("AMLAS_SAGEMAKER_ROLE_ARN", "")
-            or _os.environ.get("AMLAS_SAGEMAKER_ROLE_ARN", "")
+            or resolve_env_snapshot("sagemaker_execution_role_arn")
             or "arn:aws:iam::000000000000:role/deploy"
         )
         self._default_image = default_image
@@ -494,8 +607,14 @@ class SageMakerDeploymentBackend:
         return self._gg
 
     # ── package: create_model (T-DEPLOY-09) ─────────────────────────────────────
-    def package(self, *, model_ref: ModelRef, image: str | None = None,
-                inference_code: str | None = None, env: dict[str, Any] | None = None) -> PackageRef:
+    def package(
+        self,
+        *,
+        model_ref: ModelRef,
+        image: str | None = None,
+        inference_code: str | None = None,
+        env: dict[str, Any] | None = None,
+    ) -> PackageRef:
         """Create a SageMaker Model from the artifact (the deployable container ref)."""
         sm = self._client()
         model_name = _sanitize("model", model_ref.algo or "pkg")
@@ -508,27 +627,91 @@ class SageMakerDeploymentBackend:
         if env:
             container["Environment"] = {str(k): str(v) for k, v in env.items()}
         out = sm.create_model(ModelName=model_name, ExecutionRoleArn=self._role, PrimaryContainer=container)
-        return PackageRef(arn=str(out.get("ModelArn", f"arn:aws:sagemaker:{region}::model/{model_name}")),
-                          group=model_name, version=1, approval_status="Packaged",
-                          metrics=dict(model_ref.metrics or {}))
+        return PackageRef(
+            arn=str(out.get("ModelArn", f"arn:aws:sagemaker:{region}::model/{model_name}")),
+            group=model_name,
+            version=1,
+            approval_status="Packaged",
+            metrics=dict(model_ref.metrics or {}),
+        )
 
     # ── deploy: endpoint_config → endpoint (T-DEPLOY-01, mode=) ─────────────────
-    def deploy(self, *, model_ref: ModelRef, mode: str = "realtime",
-               resources: dict[str, Any] | None = None, autoscaling: dict[str, Any] | None = None) -> EndpointRef:
+    def deploy(
+        self,
+        *,
+        model_ref: ModelRef,
+        mode: str = "realtime",
+        resources: dict[str, Any] | None = None,
+        autoscaling: dict[str, Any] | None = None,
+    ) -> EndpointRef:
         """create_model (if needed) → create_endpoint_config(mode) → create_endpoint."""
-        sm = self._client()
         res = dict(resources or {})
         model_name = res.get("model_name")
         if not model_name:
             pkg = self.package(model_ref=model_ref, image=res.get("image"), env=res.get("env"))
             model_name = pkg.group
+        return self._deploy_native_model(model_name, mode=mode, resources=res, autoscaling=autoscaling)
+
+    def _package_configuration(self) -> tuple[str | None, str, str, str]:
+        """Compare current selected configuration without native calls or grants."""
+        region = (
+            resolve_aws_client_region(self._sm, self._region, required=False)
+            if self._sm is not None
+            else resolve_aws_region(self._region, required=False)
+        )
+        return region, self._role, self._default_image, self._bucket
+
+    def _deploy_packaged(
+        self,
+        *,
+        binding: Any,
+        mode: str = "realtime",
+        resources: dict[str, Any] | None = None,
+        autoscaling: dict[str, Any] | None = None,
+    ) -> EndpointRef:
+        from ...tools.deploy_neutral import _require_original_package
+
+        _require_original_package(binding)
+        if binding.resolved.adapter is not self:
+            raise ValueError("packaged model belongs to a different deployment adapter")
+        res = dict(resources or {})
+        model_name = binding.package_ref.group
+        if "model_name" in res and res["model_name"] != model_name:
+            raise ValueError("caller model name cannot replace the original package")
+
+        def check() -> None:
+            _require_original_package(binding)
+            if binding.resolved.adapter is not self:
+                raise ValueError("packaged model belongs to a different deployment adapter")
+
+        def retain(endpoint: EndpointRef) -> None:
+            binding.scope.accepted_endpoint = endpoint
+
+        return self._deploy_native_model(
+            model_name, mode=mode, resources=res, autoscaling=autoscaling, _check=check, _on_accepted=retain
+        )
+
+    def _deploy_native_model(
+        self,
+        model_name: str,
+        *,
+        mode: str,
+        resources: dict[str, Any],
+        autoscaling: dict[str, Any] | None,
+        _check: Callable[[], None] | None = None,
+        _on_accepted: Callable[[EndpointRef], None] | None = None,
+    ) -> EndpointRef:
+        sm = self._client()
+        res = dict(resources)
         cfg_name = _sanitize("ep-config", model_name)
         ep_name = res.get("endpoint_name") or _sanitize("endpoint", model_name)
         variant = self._build_variant(model_name, mode, res)
         cfg_kwargs: dict[str, Any] = {"EndpointConfigName": cfg_name, "ProductionVariants": [variant]}
         if mode == "async":
             cfg_kwargs["AsyncInferenceConfig"] = {
-                "OutputConfig": {"S3OutputPath": res.get("async_output_uri", f"s3://{self._bucket}/async-out")}
+                "OutputConfig": {
+                    "S3OutputPath": res.get("async_output_uri", f"s3://{self._bucket}/async-out")
+                }
             }
         elif mode == "streaming":
             # G3: the managed streaming realization is an async-inference endpoint with a
@@ -536,7 +719,9 @@ class SageMakerDeploymentBackend:
             # (SNS success/error topics). The ClientConfig is the marker that distinguishes a
             # streaming endpoint from a plain async one (master plan §G3).
             async_cfg: dict[str, Any] = {
-                "OutputConfig": {"S3OutputPath": res.get("async_output_uri", f"s3://{self._bucket}/stream-out")},
+                "OutputConfig": {
+                    "S3OutputPath": res.get("async_output_uri", f"s3://{self._bucket}/stream-out")
+                },
                 "ClientConfig": {
                     "MaxConcurrentInvocationsPerInstance": int(res.get("max_concurrent_invocations", 4)),
                 },
@@ -544,25 +729,89 @@ class SageMakerDeploymentBackend:
             notif = res.get("notification_config") or {}
             if notif.get("success_topic") or notif.get("error_topic"):
                 async_cfg["OutputConfig"]["NotificationConfig"] = {
-                    k: v for k, v in (
+                    k: v
+                    for k, v in (
                         ("SuccessTopic", notif.get("success_topic")),
                         ("ErrorTopic", notif.get("error_topic")),
-                    ) if v
+                    )
+                    if v
                 }
             cfg_kwargs["AsyncInferenceConfig"] = async_cfg
+        if _check is not None:
+            _check()
         sm.create_endpoint_config(**cfg_kwargs)
-        sm.create_endpoint(EndpointName=ep_name, EndpointConfigName=cfg_name)
-        desc = sm.describe_endpoint(EndpointName=ep_name)
+        if _check is not None:
+            _check()
+        accepted = sm.create_endpoint(EndpointName=ep_name, EndpointConfigName=cfg_name)
+        arn = accepted.get("EndpointArn", "") if type(accepted) is dict else ""
+        region = resolve_aws_client_region(sm, self._region, required=False)
+        arn = arn if _endpoint_arn_identity(arn, ep_name, region) is not None else ""
+        if _on_accepted is not None:
+            _on_accepted(_ObservedEndpointRef(name=ep_name, arn=arn, mode=mode, backend="sagemaker"))
+        if _check is not None:
+            _check()
+        status = "Unknown"
+        try:
+            if _check is not None:
+                _check()
+            desc = sm.describe_endpoint(EndpointName=ep_name)
+            if _check is not None:
+                _check()
+        except Exception as error:
+            error_class = type(error).__name__
+            if error_class not in {
+                "TimeoutError",
+                "ClientError",
+                "ParamValidationError",
+                "ConnectionError",
+                "OSError",
+                "ValueError",
+            }:
+                error_class = "UNKNOWN"
+            _LOGGER.warning("deployment endpoint observation unavailable: error_class=%s", error_class)
+            desc = None
+        if (
+            type(desc) is dict
+            and desc.get("EndpointName") == ep_name
+            and desc.get("EndpointConfigName") == cfg_name
+            and _endpoint_arn_identity(desc.get("EndpointArn"), ep_name, region) is not None
+            and (not arn or desc["EndpointArn"] == arn)
+        ):
+            arn = desc["EndpointArn"]
+            observed = desc.get("EndpointStatus")
+            if type(observed) is str and observed in {
+                "Creating",
+                "Updating",
+                "SystemUpdating",
+                "RollingBack",
+                "InService",
+                "OutOfService",
+                "Deleting",
+                "Failed",
+                "UpdateRollbackFailed",
+            }:
+                status = observed
         # WA-03 (MLREL05-BP01): honor the previously-ignored ``autoscaling`` dict by registering
         # an Application Auto Scaling target + target-tracking policy for instance-backed
         # endpoints. Serverless endpoints scale natively (MaxConcurrency) so they are skipped.
-        if autoscaling and mode != "serverless":
-            self._register_autoscaling(ep_name, res.get("variant_name", "AllTraffic"), autoscaling)
-        return EndpointRef(name=ep_name, arn=str(desc.get("EndpointArn", "")),
-                           mode=mode, backend="sagemaker")
+        if _check is not None:
+            _check()
+        if status == "InService" and autoscaling and mode != "serverless":
+            self._register_autoscaling(
+                ep_name, res.get("variant_name", "AllTraffic"), autoscaling, _check=_check
+            )
+        if _check is not None:
+            _check()
+        return _ObservedEndpointRef(name=ep_name, arn=arn, mode=mode, backend="sagemaker", status=status)
 
-    def _register_autoscaling(self, endpoint_name: str, variant_name: str,
-                              autoscaling: dict[str, Any]) -> dict[str, Any]:
+    def _register_autoscaling(
+        self,
+        endpoint_name: str,
+        variant_name: str,
+        autoscaling: dict[str, Any],
+        *,
+        _check: Callable[[], None] | None = None,
+    ) -> dict[str, Any]:
         """Register an Application Auto Scaling target + target-tracking policy (WA-03).
 
         Translates the neutral ``autoscaling`` dict (``min_capacity`` / ``max_capacity`` /
@@ -578,6 +827,8 @@ class SageMakerDeploymentBackend:
         max_cap = int(autoscaling.get("max_capacity", max(min_cap, 2)))
         target_value = float(autoscaling.get("target_value", 70.0))
         predefined = autoscaling.get("metric", "SageMakerVariantInvocationsPerInstance")
+        if _check is not None:
+            _check()
         aas.register_scalable_target(
             ServiceNamespace="sagemaker",
             ResourceId=resource_id,
@@ -585,12 +836,16 @@ class SageMakerDeploymentBackend:
             MinCapacity=min_cap,
             MaxCapacity=max_cap,
         )
+        if _check is not None:
+            _check()
         policy_cfg: dict[str, Any] = {
             "TargetValue": target_value,
             "PredefinedMetricSpecification": {"PredefinedMetricType": predefined},
             "ScaleInCooldown": int(autoscaling.get("scale_in_cooldown", 300)),
             "ScaleOutCooldown": int(autoscaling.get("scale_out_cooldown", 60)),
         }
+        if _check is not None:
+            _check()
         aas.put_scaling_policy(
             PolicyName=f"{endpoint_name}-target-tracking",
             ServiceNamespace="sagemaker",
@@ -599,12 +854,22 @@ class SageMakerDeploymentBackend:
             PolicyType="TargetTrackingScaling",
             TargetTrackingScalingPolicyConfiguration=policy_cfg,
         )
-        return {"resource_id": resource_id, "min_capacity": min_cap, "max_capacity": max_cap,
-                "target_value": target_value, "metric": predefined}
+        if _check is not None:
+            _check()
+        return {
+            "resource_id": resource_id,
+            "min_capacity": min_cap,
+            "max_capacity": max_cap,
+            "target_value": target_value,
+            "metric": predefined,
+        }
 
     def _build_variant(self, model_name: str, mode: str, res: dict[str, Any]) -> dict[str, Any]:
         """Translate the neutral ``mode`` + resources into a SageMaker ProductionVariant."""
-        variant: dict[str, Any] = {"VariantName": res.get("variant_name", "AllTraffic"), "ModelName": model_name}
+        variant: dict[str, Any] = {
+            "VariantName": res.get("variant_name", "AllTraffic"),
+            "ModelName": model_name,
+        }
         if mode == "serverless":
             variant["ServerlessConfig"] = {
                 "MemorySizeInMB": int(res.get("memory_mb", 2048)),
@@ -617,12 +882,18 @@ class SageMakerDeploymentBackend:
         return variant
 
     # ── invoke (T-DEPLOY-02) ────────────────────────────────────────────────────
-    def invoke(self, *, endpoint: EndpointRef, payload: Any, target_model: str | None = None) -> dict[str, Any]:
+    def invoke(
+        self, *, endpoint: EndpointRef, payload: Any, target_model: str | None = None
+    ) -> dict[str, Any]:
         """Invoke via sagemaker-runtime; return the decoded ``{"prediction": ...}``."""
         rt = self._runtime()
         body = payload if isinstance(payload, (bytes, bytearray, str)) else self._to_csv(payload)
-        kwargs: dict[str, Any] = {"EndpointName": endpoint.name, "Body": body,
-                                  "ContentType": "text/csv", "Accept": "text/csv"}
+        kwargs: dict[str, Any] = {
+            "EndpointName": endpoint.name,
+            "Body": body,
+            "ContentType": "text/csv",
+            "Accept": "text/csv",
+        }
         if target_model:
             kwargs["TargetModel"] = target_model
         out = rt.invoke_endpoint(**kwargs)
@@ -630,12 +901,23 @@ class SageMakerDeploymentBackend:
         decoded = raw.read() if hasattr(raw, "read") else raw
         if isinstance(decoded, (bytes, bytearray)):
             decoded = decoded.decode("utf-8", errors="replace")
-        return {"prediction": decoded, "endpoint": endpoint.name, "target_model": target_model,
-                "backend": "sagemaker"}
+        return {
+            "prediction": decoded,
+            "endpoint": endpoint.name,
+            "target_model": target_model,
+            "backend": "sagemaker",
+        }
 
     # ── canary / blue-green (T-DEPLOY-03) ───────────────────────────────────────
-    def update_canary(self, *, endpoint: EndpointRef, new_config: dict[str, Any],
-                      canary_pct: int, alarms: list[str] | None = None, mode: str = "canary") -> dict[str, Any]:
+    def update_canary(
+        self,
+        *,
+        endpoint: EndpointRef,
+        new_config: dict[str, Any],
+        canary_pct: int,
+        alarms: list[str] | None = None,
+        mode: str = "canary",
+    ) -> dict[str, Any]:
         """Build a new endpoint-config + update_endpoint with deployment guardrails.
 
         Uses ``DeploymentConfig`` (canary/linear traffic-shift + CloudWatch auto-rollback
@@ -645,7 +927,9 @@ class SageMakerDeploymentBackend:
         sm = self._client()
         model_name = new_config.get("model_name") or new_config.get("ModelName")
         cfg_name = _sanitize("ep-config", model_name or endpoint.name)
-        variant = self._build_variant(model_name or endpoint.name, new_config.get("mode", "realtime"), new_config)
+        variant = self._build_variant(
+            model_name or endpoint.name, new_config.get("mode", "realtime"), new_config
+        )
         sm.create_endpoint_config(EndpointConfigName=cfg_name, ProductionVariants=[variant])
         traffic_type = "ALL_AT_ONCE" if mode == "blue_green" else "CANARY"
         deployment_config: dict[str, Any] = {
@@ -659,15 +943,23 @@ class SageMakerDeploymentBackend:
         }
         if alarms:
             deployment_config["AutoRollbackConfiguration"] = {"Alarms": [{"AlarmName": a} for a in alarms]}
-        sm.update_endpoint(EndpointName=endpoint.name, EndpointConfigName=cfg_name,
-                           DeploymentConfig=deployment_config)
-        return {"deployment_status": "Updating", "strategy": mode, "canary_pct": int(canary_pct),
-                "endpoint": endpoint.name, "endpoint_config": cfg_name, "alarms": list(alarms or []),
-                "backend": "sagemaker"}
+        sm.update_endpoint(
+            EndpointName=endpoint.name, EndpointConfigName=cfg_name, DeploymentConfig=deployment_config
+        )
+        return {
+            "deployment_status": "Updating",
+            "strategy": mode,
+            "canary_pct": int(canary_pct),
+            "endpoint": endpoint.name,
+            "endpoint_config": cfg_name,
+            "alarms": list(alarms or []),
+            "backend": "sagemaker",
+        }
 
     # ── batch transform (T-DEPLOY-04) ───────────────────────────────────────────
-    def batch_score(self, *, model_ref: ModelRef, input_uri: str, output_uri: str,
-                    resources: dict[str, Any] | None = None) -> JobHandle:
+    def batch_score(
+        self, *, model_ref: ModelRef, input_uri: str, output_uri: str, resources: dict[str, Any] | None = None
+    ) -> JobHandle:
         """Submit a SageMaker Batch Transform job (create_transform_job)."""
         sm = self._client()
         res = dict(resources or {})
@@ -676,17 +968,26 @@ class SageMakerDeploymentBackend:
             model_name = self.package(model_ref=model_ref, image=res.get("image")).group
         job = _sanitize("transform", model_name)
         sm.create_transform_job(
-            TransformJobName=job, ModelName=model_name,
-            TransformInput={"DataSource": {"S3DataSource": {"S3DataType": "S3Prefix", "S3Uri": input_uri}},
-                            "ContentType": res.get("content_type", "text/csv"),
-                            "SplitType": res.get("split_type", "Line")},
+            TransformJobName=job,
+            ModelName=model_name,
+            TransformInput={
+                "DataSource": {"S3DataSource": {"S3DataType": "S3Prefix", "S3Uri": input_uri}},
+                "ContentType": res.get("content_type", "text/csv"),
+                "SplitType": res.get("split_type", "Line"),
+            },
             TransformOutput={"S3OutputPath": output_uri},
-            TransformResources={"InstanceType": res.get("instance_type", "ml.m5.large"),
-                                "InstanceCount": int(res.get("instance_count", 1))},
+            TransformResources={
+                "InstanceType": res.get("instance_type", "ml.m5.large"),
+                "InstanceCount": int(res.get("instance_count", 1)),
+            },
         )
         desc = sm.describe_transform_job(TransformJobName=job)
-        return JobHandle(id=job, backend="sagemaker", arn=str(desc.get("TransformJobArn", "")),
-                         extra={"status": desc.get("TransformJobStatus", "InProgress"), "output_uri": output_uri})
+        return JobHandle(
+            id=job,
+            backend="sagemaker",
+            arn=str(desc.get("TransformJobArn", "")),
+            extra={"status": desc.get("TransformJobStatus", "InProgress"), "output_uri": output_uri},
+        )
 
     # ── rollback (T-DEPLOY-07) ──────────────────────────────────────────────────
     def rollback(self, *, endpoint: EndpointRef, to_version: str | None = None) -> dict[str, Any]:
@@ -694,8 +995,12 @@ class SageMakerDeploymentBackend:
         sm = self._client()
         prior_cfg = to_version or f"{endpoint.name}-prior"
         sm.update_endpoint(EndpointName=endpoint.name, EndpointConfigName=prior_cfg)
-        return {"status": "RolledBack", "endpoint": endpoint.name, "restored_version": prior_cfg,
-                "backend": "sagemaker"}
+        return {
+            "status": "RolledBack",
+            "endpoint": endpoint.name,
+            "restored_version": prior_cfg,
+            "backend": "sagemaker",
+        }
 
     # ── delete (T-DEPLOY-08) ────────────────────────────────────────────────────
     def delete(self, *, endpoint: EndpointRef) -> dict[str, Any]:
@@ -705,10 +1010,16 @@ class SageMakerDeploymentBackend:
         return {"status": "Deleting", "endpoint": endpoint.name, "backend": "sagemaker"}
 
     # ── inference recommender (T-DEPLOY-11) ─────────────────────────────────────
-    def recommend_config(self, *, model_ref: ModelRef, sample: str,
-                         sla: dict[str, Any] | None = None,
-                         job_name: str | None = None,
-                         wait_seconds: int = 0, poll_interval: float = 30.0) -> list[SizingRec]:
+    def recommend_config(
+        self,
+        *,
+        model_ref: ModelRef,
+        sample: str,
+        sla: dict[str, Any] | None = None,
+        job_name: str | None = None,
+        wait_seconds: int = 0,
+        poll_interval: float = 30.0,
+    ) -> list[SizingRec]:
         """Submit an Inference Recommender job + parse its recommendations.
 
         the offline AWS API emulator does not implement ``create_inference_recommendations_job`` — callers may inject a
@@ -734,8 +1045,12 @@ class SageMakerDeploymentBackend:
         job = job_name or _sanitize("ir", model_ref.algo or "rec")
         pkg_arn = model_ref.extra.get("model_package_arn") if isinstance(model_ref.extra, dict) else None
         sm.create_inference_recommendations_job(
-            JobName=job, JobType="Default", RoleArn=self._role,
-            InputConfig={"ModelPackageVersionArn": pkg_arn or model_ref.uri or "arn:aws:sagemaker:::model-package/p/1"},
+            JobName=job,
+            JobType="Default",
+            RoleArn=self._role,
+            InputConfig={
+                "ModelPackageVersionArn": pkg_arn or model_ref.uri or "arn:aws:sagemaker:::model-package/p/1"
+            },
         )
         desc = sm.describe_inference_recommendations_job(JobName=job)
         if wait_seconds > 0:
@@ -751,38 +1066,63 @@ class SageMakerDeploymentBackend:
         for r in desc.get("InferenceRecommendations", []) or []:
             ep = r.get("EndpointConfiguration", {})
             metr = r.get("Metrics", {})
-            recs.append(SizingRec(
-                instance_type=str(ep.get("InstanceType", "ml.m5.large")),
-                est_cost_per_hour=float(metr.get("CostPerHour", 0.0) or 0.0),
-                est_latency_ms=float(metr.get("ModelLatency", 0.0) or 0.0),
-                est_throughput=float(metr.get("MaxInvocations", 0.0) or 0.0),
-            ))
+            recs.append(
+                SizingRec(
+                    instance_type=str(ep.get("InstanceType", "ml.m5.large")),
+                    est_cost_per_hour=float(metr.get("CostPerHour", 0.0) or 0.0),
+                    est_latency_ms=float(metr.get("ModelLatency", 0.0) or 0.0),
+                    est_throughput=float(metr.get("MaxInvocations", 0.0) or 0.0),
+                )
+            )
         return recs
 
     # ── compile / Neo (T-DEPLOY-10) — extra method, used by the compile_model tool ──
-    def compile(self, *, model_ref: ModelRef, target_device: str = "ml_c5",
-                framework: str = "PYTORCH", dtype: str = "fp32",
-                data_shape: str = '{"input":[1,3,224,224]}') -> dict[str, Any]:
+    def compile(
+        self,
+        *,
+        model_ref: ModelRef,
+        target_device: str = "ml_c5",
+        framework: str = "PYTORCH",
+        dtype: str = "fp32",
+        data_shape: str = '{"input":[1,3,224,224]}',
+    ) -> dict[str, Any]:
         """Submit a SageMaker Neo compilation job (create_compilation_job)."""
         sm = self._client()
         job = _sanitize("neo", model_ref.algo or "compile")
         out_location = f"s3://{self._bucket}/neo-out"
         sm.create_compilation_job(
-            CompilationJobName=job, RoleArn=self._role,
-            InputConfig={"S3Uri": model_ref.uri or f"s3://{self._bucket}/model.tar.gz",
-                         "DataInputConfig": data_shape, "Framework": framework.upper()},
+            CompilationJobName=job,
+            RoleArn=self._role,
+            InputConfig={
+                "S3Uri": model_ref.uri or f"s3://{self._bucket}/model.tar.gz",
+                "DataInputConfig": data_shape,
+                "Framework": framework.upper(),
+            },
             OutputConfig={"S3OutputLocation": out_location, "TargetDevice": target_device},
             StoppingCondition={"MaxRuntimeInSeconds": 900},
         )
-        return {"compilation_job": job, "target_device": target_device, "dtype": dtype,
-                "output_uri": out_location, "framework": framework.upper(), "backend": "sagemaker"}
+        return {
+            "compilation_job": job,
+            "target_device": target_device,
+            "dtype": dtype,
+            "output_uri": out_location,
+            "framework": framework.upper(),
+            "backend": "sagemaker",
+        }
 
     # ── edge / embedded deploy (T-DEPLOY-10b, G3) ───────────────────────────────
-    def deploy_edge(self, *, model_ref: ModelRef, compile_output: dict[str, Any] | None = None,
-                    target_device: str = "jetson_nano", framework: str = "PYTORCH",
-                    greengrass_target: str | None = None, component_name: str | None = None,
-                    component_version: str = "1.0.0",
-                    data_shape: str = '{"input":[1,3,224,224]}') -> dict[str, Any]:
+    def deploy_edge(
+        self,
+        *,
+        model_ref: ModelRef,
+        compile_output: dict[str, Any] | None = None,
+        target_device: str = "jetson_nano",
+        framework: str = "PYTORCH",
+        greengrass_target: str | None = None,
+        component_name: str | None = None,
+        component_version: str = "1.0.0",
+        data_shape: str = '{"input":[1,3,224,224]}',
+    ) -> dict[str, Any]:
         """Compile (Neo) → package (Edge Manager) → optionally deploy (Greengrass V2) for an edge device.
 
         The managed edge path (master plan §G3) extends the Neo ``compile`` (T-DEPLOY-10) into an
@@ -808,14 +1148,16 @@ class SageMakerDeploymentBackend:
             compile_job = str(compile_output["compilation_job"])
             model_artifact = compile_output.get("output_uri") or f"s3://{self._bucket}/neo-out"
         else:
-            compiled = self.compile(model_ref=model_ref, target_device=target_device,
-                                    framework=framework, data_shape=data_shape)
+            compiled = self.compile(
+                model_ref=model_ref, target_device=target_device, framework=framework, data_shape=data_shape
+            )
             compile_job = compiled["compilation_job"]
             # describe to resolve the compiled artifact location (best-effort under fakes/the offline AWS API emulator).
             try:
                 cdesc = sm.describe_compilation_job(CompilationJobName=compile_job)
-                model_artifact = cdesc.get("ModelArtifacts", {}).get("S3ModelArtifacts") \
-                    or compiled.get("output_uri")
+                model_artifact = cdesc.get("ModelArtifacts", {}).get("S3ModelArtifacts") or compiled.get(
+                    "output_uri"
+                )
             except Exception:
                 model_artifact = compiled.get("output_uri")
 
@@ -831,8 +1173,9 @@ class SageMakerDeploymentBackend:
             OutputConfig={
                 "S3OutputLocation": f"s3://{self._bucket}/edge-out",
                 "PresetDeploymentType": "GreengrassV2Component",
-                "PresetDeploymentConfig": _json_dumps({"ComponentName": comp,
-                                                        "ComponentVersion": component_version}),
+                "PresetDeploymentConfig": _json_dumps(
+                    {"ComponentName": comp, "ComponentVersion": component_version}
+                ),
             },
         )
 
@@ -853,13 +1196,14 @@ class SageMakerDeploymentBackend:
         if greengrass_target and (self._gg is not None):
             gg = self._greengrass()
             comp_resp = gg.create_component_version(
-                inlineRecipe=_json_dumps({
-                    "RecipeFormatVersion": "2020-01-25",
-                    "ComponentName": comp,
-                    "ComponentVersion": component_version,
-                    "Manifests": [{"Platform": {"os": "linux"},
-                                   "Artifacts": [{"Uri": model_artifact}]}],
-                }).encode("utf-8"),
+                inlineRecipe=_json_dumps(
+                    {
+                        "RecipeFormatVersion": "2020-01-25",
+                        "ComponentName": comp,
+                        "ComponentVersion": component_version,
+                        "Manifests": [{"Platform": {"os": "linux"}, "Artifacts": [{"Uri": model_artifact}]}],
+                    }
+                ).encode("utf-8"),
             )
             comp_arn = comp_resp.get("arn", "")
             deploy_resp = gg.create_deployment(
@@ -867,12 +1211,14 @@ class SageMakerDeploymentBackend:
                 deploymentName=_sanitize("edge-deploy", comp),
                 components={comp: {"componentVersion": component_version}},
             )
-            out.update({
-                "deployed": True,
-                "deployment_id": deploy_resp.get("deploymentId", ""),
-                "component_arn": comp_arn,
-                "iot_job_arn": deploy_resp.get("iotJobArn", ""),
-            })
+            out.update(
+                {
+                    "deployed": True,
+                    "deployment_id": deploy_resp.get("deploymentId", ""),
+                    "component_arn": comp_arn,
+                    "iot_job_arn": deploy_resp.get("iotJobArn", ""),
+                }
+            )
         return out
 
     @staticmethod

@@ -128,6 +128,10 @@ class GuardrailStack(Stack):
             bedrock.CfnGuardrail.PiiEntityConfigProperty(
                 type=entity,
                 action=self.pii_action_param.value_as_string,
+                input_enabled=True,
+                output_enabled=True,
+                input_action=self.pii_action_param.value_as_string,
+                output_action=self.pii_action_param.value_as_string,
             )
             for entity in _PII_ENTITIES
         ]

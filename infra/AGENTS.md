@@ -12,6 +12,15 @@ exports and supported native resource tags. Shell deployment and cleanup remain 
 
 ## Local Contracts
 
+<!-- normal-callback-app-optin-contract:begin -->
+- `AMLAS_NORMAL_CALLBACK_ENABLED` accepts only absent/empty, false or true. Default
+  and false retain legacy callback templates. True requires explicit canonical
+  deployment/qualifier/runtime-version/route-SHA selectors; Async also requires a
+  literal runtime ARN in the selected account and region. Pass these only to the
+  existing two stack constructors; RuntimeStack remains synth-only in setup.
+  Environment/configuration DATA never grants callback or lifecycle authority.
+<!-- normal-callback-app-optin-contract:end -->
+
 - Resolve AMLAS_DEPLOYMENT_PREFIX at app execution through the shared configuration helper.
   Default amlas retains legacy physical stack and resource names. A distinct prefix assigns
   prefix-LogicalStackID physical names while retaining logical IDs and CLI selections.

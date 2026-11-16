@@ -32,6 +32,7 @@ consults a cost estimate the caller passes in (the registry/ports do the AWS wor
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -73,63 +74,125 @@ class ActionClass(StrEnum):
 
 # ── classification tables (doc 05 §8.8) ─────────────────────────────────────
 _CHEAP_READS = {
-    "run_profile", "read_lake_slice", "list_lake_catalog", "describe_dataset",
-    "list_catalog", "read_slice", "research", "web_retrieve", "preview_flow_plan",
+    "run_profile",
+    "read_lake_slice",
+    "list_lake_catalog",
+    "describe_dataset",
+    "list_catalog",
+    "read_slice",
+    "research",
+    "web_retrieve",
+    "preview_flow_plan",
     # M4 Stage-9 readiness tools are pure-reasoning / read-only assessments — they
     # produce a go/no-go review, they do NOT spend or change production (doc 06 §5.3
     # readiness_flow). The deploy actions they precede are what gate (below).
-    "run_readiness_gate", "build_risk_register", "compile_readiness_review",
-    "design_production_architecture", "draft_operational_runbook",
-    "select_deployment_strategy", "recommend_inference_config", "readiness_flow",
+    "run_readiness_gate",
+    "build_risk_register",
+    "compile_readiness_review",
+    "design_production_architecture",
+    "draft_operational_runbook",
+    "select_deployment_strategy",
+    "recommend_inference_config",
+    "readiness_flow",
     # M5 Stage-11 monitoring is read/observe-heavy — dashboards, metrics, drift analysis,
     # alerts, reports, and the retrain-trigger DECISION provision nothing irreversible
     # (the managed schedule-setup sub-step is gated within the flow). doc 06 §5.3 monitor_flow.
-    "monitor_flow", "analyze_drift", "get_metrics", "get_recent_logs",
-    "compile_monitoring_report", "evaluate_retrain_trigger", "analyze_production_failures",
-    "build_monitoring_dashboard", "track_inference_spend",
+    "monitor_flow",
+    "analyze_drift",
+    "get_metrics",
+    "get_recent_logs",
+    "compile_monitoring_report",
+    "evaluate_retrain_trigger",
+    "analyze_production_failures",
+    "build_monitoring_dashboard",
+    "track_inference_spend",
     # M6 Stage 0-3 research / framing / solution-survey are read + pure-reasoning — they
     # scan/index research, structure problem cards, and survey model options; they provision
     # nothing irreversible (the RetrievalBackend is a local TF-IDF read offline ↔ Bedrock KB
     # managed; ModelHub list is a catalog read). Only Stage-4 labeling-job creation gates
     # (below). doc 06 §5.3 research_intel_flow / business_framing_flow / solution_survey_flow.
-    "research_intel_flow", "business_framing_flow", "solution_survey_flow",
-    "scan_research", "triage_reproducibility", "generate_research_digest", "schedule_research_scan",
-    "capture_business_problem", "define_business_kpi", "assess_ml_necessity", "business_go_no_go",
-    "select_problem_type", "define_success_metrics", "build_problem_card", "check_stage_exit",
-    "list_jumpstart_models", "survey_managed_services", "apply_research_gate",
-    "build_candidate_shortlist", "get_labeling_progress", "run_sql",
-    "index_research_corpus", "chunk_documents", "query_research_corpus", "build_retrieval_index",
-    "build_metadata_filters", "tune_retrieval",
+    "research_intel_flow",
+    "business_framing_flow",
+    "solution_survey_flow",
+    "scan_research",
+    "triage_reproducibility",
+    "generate_research_digest",
+    "schedule_research_scan",
+    "capture_business_problem",
+    "define_business_kpi",
+    "assess_ml_necessity",
+    "business_go_no_go",
+    "select_problem_type",
+    "define_success_metrics",
+    "build_problem_card",
+    "check_stage_exit",
+    "list_jumpstart_models",
+    "survey_managed_services",
+    "apply_research_gate",
+    "build_candidate_shortlist",
+    "get_labeling_progress",
+    "run_sql",
+    "index_research_corpus",
+    "chunk_documents",
+    "query_research_corpus",
+    "build_retrieval_index",
+    "build_metadata_filters",
+    "tune_retrieval",
     # Shift-left AWS control plane (plan §A2/§A3): readiness reports the allowlist and reads
     # selected configuration, and the preflight remediation PLANNER only maps
     # failed checks to the tool that fixes each one — applying is delegated to those tools,
     # which gate individually as IRREVERSIBLE. Neither may demand an approval, or the agent
     # could not even diagnose a blocked dispatch. ``remediate_…`` does not start with a
     # read-ish prefix, so it must be listed explicitly.
-    "describe_aws_readiness", "remediate_dispatch_preflight",
+    "describe_aws_readiness",
+    "remediate_dispatch_preflight",
     # Plan §B3: rendering a dashboard chart reads existing artifacts and publishes a view
     # request — no spend, no provisioning, nothing irreversible.
     "render_dashboard_view",
 }
 _BOUNDED_COMPUTE = {
-    "train_model", "tune_model", "run_automl_generate_only", "score_data_quality_6dim",
+    "train_model",
+    "tune_model",
+    "run_automl_generate_only",
+    "score_data_quality_6dim",
     # M7: a LOCAL git commit of an ML artifact (T-GIT-02 commit_artifact) touches the
     # working tree but not a remote — a bounded, recoverable side-effect → auto-approved
     # under the bounded cap. The PUSH that publishes it (open_pr) is what gates (below).
     "commit_artifact",
 }
 _EXPENSIVE_JOBS = {
-    "submit_training_run", "submit_training_job", "run_hpo", "run_automl",
-    "run_processing_job", "run_glue_job", "run_crawler", "apply_recipe",
+    "submit_coding_pair",
+    "coding_pair_flow",
+    "submit_coding_generation",
+    "coding_generation_flow",
+    "submit_qwen_sft",
+    "reload_qwen_sft",
+    "qwen_sft_flow",
+    "data_preparation_flow",
+    "submit_training_run",
+    "submit_training_job",
+    "run_hpo",
+    "run_automl",
+    "run_processing_job",
+    "run_glue_job",
+    "run_crawler",
+    "apply_recipe",
     "run_batch_transform",
     # M3: the spend-incurring train/tune flow IDs are gated as EXPENSIVE_JOB so the
     # plan_approve_execute wrapper denies them under non-interactive ASK (never
     # auto-approving training/HPO spend as cheap "bounded compute"). doc 05 §8.8.
-    "baseline_train_flow", "hpo_flow",
+    "baseline_train_flow",
+    "hpo_flow",
 }
 _IRREVERSIBLE = {
-    "deploy_endpoint", "update_endpoint_canary", "delete_endpoint", "retire_model",
-    "grant_data_access", "rollback_deployment", "run_shadow_deployment", "run_ab_test",
+    "deploy_endpoint",
+    "update_endpoint_canary",
+    "delete_endpoint",
+    "retire_model",
+    "grant_data_access",
+    "rollback_deployment",
+    "run_shadow_deployment",
+    "run_ab_test",
     # G3: deploying a compiled model to an edge/embedded device (Greengrass V2 component +
     # fleet deployment) provisions an external, not-freely-reversible artifact → IRREVERSIBLE.
     # The ``deploy`` substring hint already catches it, but list it explicitly for clarity.
@@ -142,12 +205,14 @@ _IRREVERSIBLE = {
     # M6: creating a Ground-Truth data-labeling job incurs cost + provisions a managed job
     # (not freely reversible) → gated. The data_collection_flow inventory/strategy steps stay
     # CHEAP_READ; only the labeling-job creation gates (ADR-014). doc 06 §5.3 / doc 05 §8.8.
-    "create_labeling_job", "data_collection_flow",
+    "create_labeling_job",
+    "data_collection_flow",
     # M7: opening a PR/MR PUSHES the branch + creates a merge request — a REAL external
     # side-effect that triggers the PR-based AWS security review → gated (US-CC.08; doc 06
     # §1.3 devops_git_agent). The LOCAL commit_artifact stays BOUNDED_COMPUTE (above); only
     # the push/MR gates. devops_git_flow composes them, so the flow gates too.
-    "open_pr", "devops_git_flow",
+    "open_pr",
+    "devops_git_flow",
     # Shift-left AWS control plane (plan §A2/§A4, tools/aws_control.py): the agents now
     # CONFIGURE AWS — create lake prefixes, catalog databases, IAM job roles, scoped
     # grants, quota requests. Each provisions or re-permissions real account state that is
@@ -156,8 +221,11 @@ _IRREVERSIBLE = {
     # planner stay CHEAP_READ (they are covered by the read-prefix rule below).
     # NOTE: ``grant_role_policy`` is also caught by the "grant" substring hint, and
     # ``ensure_iam_service_role`` by none — hence the explicit list.
-    "ensure_s3_prefix", "ensure_glue_database", "ensure_iam_service_role",
-    "grant_role_policy", "request_quota_increase",
+    "ensure_s3_prefix",
+    "ensure_glue_database",
+    "ensure_iam_service_role",
+    "grant_role_policy",
+    "request_quota_increase",
 }
 
 # substring fallbacks so unseen variants still classify safely (deploy/delete → gated)
@@ -265,7 +333,7 @@ class ApprovalPolicy:
 def request_approval(
     *,
     action: str,
-    cost_estimate: float = 0.0,
+    cost_estimate: float | None = 0.0,
     impact: str = "",
     policy: ApprovalPolicy | None = None,
 ) -> dict[str, Any]:
@@ -307,25 +375,56 @@ def request_approval(
     if cls == ActionClass.CHEAP_READ:
         return _decision("approved", gated=False, reason="cheap read — auto-approved")
 
+    # A missing quote is unknown, never a fabricated zero. Reject malformed
+    # quotes before any automatic permission decision or numeric comparison.
+    if cost_estimate is not None:
+        valid_quote = type(cost_estimate) in (int, float)
+        try:
+            valid_quote = valid_quote and math.isfinite(cost_estimate) and cost_estimate >= 0
+        except (TypeError, OverflowError):
+            valid_quote = False
+        if not valid_quote:
+            cost_estimate = None
+            return _decision("denied", gated=True, reason="invalid cost quote")
+    if (
+        cost_estimate is None
+        and policy.max_auto_cost is not None
+        and policy.mode in (ApprovalMode.AUTO, ApprovalMode.ALLOWLIST)
+    ):
+        return _decision("denied", gated=True, reason="unknown cost cannot satisfy max_auto_cost")
+
     # Bounded compute auto-approves under the bounded cap, else is treated as gated.
     is_gated = True
-    if cls == ActionClass.BOUNDED_COMPUTE and cost_estimate <= policy.bounded_compute_cap:
+    if (
+        cls == ActionClass.BOUNDED_COMPUTE
+        and cost_estimate is not None
+        and cost_estimate <= policy.bounded_compute_cap
+    ):
         return _decision("approved", gated=False, reason="bounded compute under cap — auto-approved")
 
     # AUTO/bypass — trusted headless/CI: everything pre-satisfied.
     if policy.mode == ApprovalMode.AUTO:
-        return _decision("approved", gated=is_gated, reason="auto/bypass mode (trusted automation)", auto=True)
+        return _decision(
+            "approved", gated=is_gated, reason="auto/bypass mode (trusted automation)", auto=True
+        )
 
     # ALLOWLIST — approve iff allowlisted AND under any cost cap.
     if policy.mode == ApprovalMode.ALLOWLIST:
         if action in policy.allowlist:
-            if policy.max_auto_cost is not None and cost_estimate > policy.max_auto_cost:
+            if (
+                policy.max_auto_cost is not None
+                and cost_estimate is not None
+                and cost_estimate > policy.max_auto_cost
+            ):
                 return _decision(
-                    "denied", gated=True,
+                    "denied",
+                    gated=True,
                     reason=f"allowlisted but over max_auto_cost ${policy.max_auto_cost} (gated)",
                     allowlisted=True,
                 )
-            return _decision("approved", gated=is_gated, reason="allowlisted (always-allow)", allowlisted=True)
+            return _decision(
+                "approved", gated=is_gated, reason="allowlisted (always-allow)", allowlisted=True
+            )
         return _decision("denied", gated=True, reason="not on allowlist — requires approval")
 
     # ASK (default, safe) — interactive responder decides; headless ASK denies.
@@ -365,7 +464,7 @@ def approval_gate_hook(policy: ApprovalPolicy | None = None) -> Hook:
         )
 
     def _action(ctx: HookContext) -> Verdict:
-        cost = float(ctx.args.get("cost_estimate", 0.0) or 0.0)
+        cost = ctx.args.get("cost_estimate", 0.0)
         impact = str(ctx.args.get("impact", ""))
         decision = request_approval(
             action=ctx.tool or ctx.action, cost_estimate=cost, impact=impact, policy=policy

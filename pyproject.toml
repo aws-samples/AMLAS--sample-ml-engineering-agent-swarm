@@ -79,8 +79,8 @@ dependencies = [
     # verifying the authenticated principal), CVE-2026-52870 (task handlers let any
     # client cancel another client's tasks); >=1.28.1: CVE-2026-59950 (WebSocket
     # transport lacks Host/Origin validation). Transitive via strands-agents.
-    # >=1.30.0: CVE-2026-59951 (unbounded StreamableHTTP session accumulation).
-    # Keep the current v1 SDK API while taking the security fix.
+    # >=1.30.0: CVE-2026-59951 / GHSA-84m7-p3x7-pcfv — bound live
+    # StreamableHTTP sessions to prevent resource exhaustion. Preserve SDK1.x.
     "mcp>=1.30.0,<2",
     # >=12.3.0: 10 advisories — CVE-2026-59197 / -59205 (native heap OOB write and
     # ImageCms heap corruption) plus 8 DoS paths (CVE-2026-54058/-54059/-54060,
@@ -126,9 +126,13 @@ agents = [
     "boto3>=1.35",
     # T-HARN-14: the AgentCore harness operations (CreateHarness / UpdateHarness /
     # InvokeHarness) first appear in botocore 1.43.0. The floor states the real
-    # requirement so a fresh resolve cannot install an SDK without them. No lock change:
-    # uv.lock already pins 1.43.57.
-    "botocore>=1.43.0",
+    # requirement so a fresh resolve cannot install an SDK without them.
+    # Instance preference lists for training capacity: CreateTrainingJob
+    # ResourceConfig.InstancePreferences and the described SelectedInstanceType /
+    # SelectedInstanceCount first appear in botocore 1.43.90; 1.43.57 refuses the
+    # request client-side and drops the fields from DescribeTrainingJob. The lock
+    # pins 1.43.127, the version used for real GPU training jobs on SageMaker.
+    "botocore>=1.43.90",
     # DEP-01: optuna is already a core dependency; not duplicated in this extra.
 ]
 data = [
@@ -196,6 +200,7 @@ exclude = [
     "/.gitlab-ci.yml",
     "/.secrets.baseline",
     "/AGENTS.md",
+    "/CLAUDE.md",
     "/tests",
     "/scripts/verify_repository_governance.py",
 ]

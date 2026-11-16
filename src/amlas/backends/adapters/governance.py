@@ -28,6 +28,7 @@ import re
 from typing import Any
 
 from ...config.aws_region import resolve_aws_region
+from ...config.guardrails import disabled_guardrail_result, guardrail_checks_enabled
 from ..ports import GovernanceBackend, GuardrailBackend
 from ..registry import register_adapter
 from ..types import ModelRef
@@ -226,6 +227,8 @@ class InProcessGuardrailBackend:
         are not false-flagged. An explicit ``policy["detect_injection"]`` ALWAYS wins
         (parameterized opt-in on trusted / opt-out on untrusted).
         """
+        if not guardrail_checks_enabled():
+            return disabled_guardrail_result(backend="inprocess")
         policy = policy or {}
         blocked = [b.lower() for b in policy.get("blocked_terms", _DEFAULT_BLOCKED)]
         lowered = (text or "").lower()
@@ -269,6 +272,8 @@ class BedrockGuardrailBackend:
 
     def check(self, *, text: str, policy: dict[str, Any] | None = None) -> dict[str, Any]:
         """Apply a Bedrock Guardrail to ``text`` (thin orchestration; ADR-004)."""
+        if not guardrail_checks_enabled():
+            return disabled_guardrail_result(backend="bedrock")
         policy = policy or {}
         client = self._client()
         out = client.apply_guardrail(

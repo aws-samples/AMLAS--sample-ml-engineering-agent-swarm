@@ -1,0 +1,42 @@
+# Fixed canonical-preparation guest; no SDK/model packages or runtime code selection.
+FROM --platform=linux/amd64 public.ecr.aws/docker/library/rust:1.90.0-alpine3.22@sha256:ee9b9f2ebd8741e4ecf1ade08918e492d642c4e625be481bb7b7954b89e9d504 AS initializer
+WORKDIR /build
+COPY processing_bootstrap/Cargo.toml processing_bootstrap/Cargo.lock ./
+COPY processing_bootstrap/src ./src
+RUN cargo build --release --locked --offline --features sagemaker-native-v1 --target x86_64-unknown-linux-musl
+# The exact official installer wheel is build-only; it never enters the runtime layer.
+FROM scratch AS installer-bootstrap
+ADD --checksum=sha256:931c303696af6fa3417112103b1cad26890e5a07eccb5b99783700e33f2b8aad https://files.pythonhosted.org/packages/62/36/a3aed958d60531cb442b7ab4596cda7b3621cfb916f8ae1d6769795c7dc1/pip-26.2-py3-none-any.whl /bootstrap/pip-26.2-py3-none-any.whl
+FROM --platform=linux/amd64 public.ecr.aws/docker/library/python:3.11-slim@sha256:db3ff2e1800a8581e2c48a27c3995339d47bdf046da21c7627accd3d51053a93
+ARG AMLAS_SOURCE_COMMIT
+LABEL org.opencontainers.image.revision=$AMLAS_SOURCE_COMMIT
+ENV AMLAS_SOURCE_COMMIT=$AMLAS_SOURCE_COMMIT
+RUN python -c 'import os,re; assert re.fullmatch("[a-f0-9]{40}",os.environ.get("AMLAS_SOURCE_COMMIT",""))'
+WORKDIR /app
+COPY uv.lock /app/uv.lock
+RUN --mount=type=bind,from=installer-bootstrap,source=/bootstrap,target=/bootstrap,readonly \
+    python -c 'import hashlib,pathlib; raw=pathlib.Path("/bootstrap/pip-26.2-py3-none-any.whl").read_bytes(); assert len(raw)==1816475 and hashlib.sha256(raw).hexdigest()=="931c303696af6fa3417112103b1cad26890e5a07eccb5b99783700e33f2b8aad"' && \
+    printf '%s\n' 'pip==26.2 --hash=sha256:931c303696af6fa3417112103b1cad26890e5a07eccb5b99783700e33f2b8aad' > /app/requirements.pip-bootstrap.txt && \
+    python -m pip install --no-index --no-deps --only-binary=:all: --require-hashes --find-links=/bootstrap -r /app/requirements.pip-bootstrap.txt && \
+    python -c 'import importlib.metadata as m; assert m.version("pip")=="26.2"; print("MODEL_BUILD_INSTALLER_VERSION=26.2")' && \
+    python -m pip uninstall --yes setuptools wheel
+RUN python -c 'import tomllib; p={x["name"]:x for x in tomllib.load(open("uv.lock","rb"))["package"]}; todo=["pyarrow"]; seen=set(); f=open("/app/requirements.preparation.txt","w"); exec("while todo:\n n=todo.pop()\n if n in seen: continue\n seen.add(n)\n q=p[n]\n todo.extend(d[\"name\"] for d in q.get(\"dependencies\",[]))\n hashes=[x[\"hash\"] for x in q.get(\"wheels\",[])]\n if not hashes: raise RuntimeError(\"unhashed binary dependency\")\n f.write(n+\"==\"+q[\"version\"]+\" \"+\" \".join(\"--hash=\"+h for h in hashes)+\"\\n\")")' && \
+    python -m pip install --no-cache-dir --only-binary=:all: --require-hashes -r /app/requirements.preparation.txt && \
+    python -m pip uninstall --yes pip && \
+    python -c 'import importlib.util as u,importlib.metadata as m; assert all(u.find_spec(n) is None for n in ("pip","setuptools","wheel")); assert not {"pip","setuptools","wheel"} & {d.metadata["Name"].lower() for d in m.distributions()}'
+RUN useradd --create-home --uid 10001 appuser && mkdir -p /opt/ml/processing/output && chown 10001:10001 /opt/ml/processing && chmod 0755 /opt/ml/processing
+COPY --from=initializer --chmod=0555 /build/target/x86_64-unknown-linux-musl/release/amlas-processing-init /usr/local/bin/amlas-processing-init
+COPY processing_bootstrap/processing_identity.py /app/processing_identity.py
+COPY src/amlas/sagemaker_entrypoints/coding_preparation.py /app/coding_preparation_worker.py
+COPY src/amlas/data_eng/coding_preparation.py /app/coding_preparation_core.py
+RUN mkdir -p /app/preparation_profiles && touch /app/preparation_profiles/__init__.py
+COPY src/amlas/data_eng/coding_preparation.py /app/preparation_profiles/coding_preparation.py
+COPY src/amlas/data_eng/open_swe_canonical.py /app/preparation_profiles/open_swe_canonical.py
+COPY src/amlas/data_eng/open_swe_derived.py /app/preparation_profiles/open_swe_derived.py
+COPY src/amlas/data_eng/commitpack_profile.py /app/preparation_profiles/commitpack_profile.py
+COPY src/amlas/data_eng/commitpack_preparation.py /app/preparation_profiles/commitpack_preparation.py
+RUN chmod 0555 /app/processing_identity.py /app/coding_preparation_worker.py /app/coding_preparation_core.py
+RUN chmod 0555 /app/preparation_profiles /app/preparation_profiles/*.py
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+USER root
+ENTRYPOINT ["/usr/local/bin/amlas-processing-init", "preparation"]

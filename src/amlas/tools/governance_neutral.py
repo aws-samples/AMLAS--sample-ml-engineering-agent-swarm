@@ -23,6 +23,7 @@ from strands import tool
 from ..backends.ports import GovernanceBackend, GuardrailBackend
 from ..backends.registry import REGISTRY
 from ..backends.types import ModelRef
+from ..config.guardrails import disabled_guardrail_result, guardrail_checks_enabled
 from ..errors import tool_error_boundary
 
 __all__ = ["check_data_access", "create_model_card", "query_lineage", "run_guardrail_check"]
@@ -115,6 +116,8 @@ def run_guardrail_check(
     Forwarded to adapters that accept it (the in-process filter); managed adapters that don't
     accept the kwarg get the call without it (back-compat).
     """
+    if not guardrail_checks_enabled():
+        return disabled_guardrail_result()
     try:
         resolved = REGISTRY.resolve(GuardrailBackend)
         out: dict[str, Any]

@@ -33,6 +33,12 @@ For guidance, see GitHub's documentation on
 [forking a repository](https://help.github.com/articles/fork-a-repo/) and
 [creating a pull request](https://help.github.com/articles/creating-a-pull-request/).
 
+## Changelog
+
+For any change a user or maintainer would notice, add one line under `## [Unreleased]` in
+`CHANGELOG.md`. Use the Added, Changed, Deprecated, Removed or Fixed group, and write one
+physical line in past tense naming the option, command or behaviour.
+
 ## Code of Conduct
 
 This project has adopted the [Amazon Open Source Code of Conduct](https://aws.github.io/code-of-conduct).

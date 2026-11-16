@@ -332,3 +332,57 @@ def test_selected_resource_identities_match_stack_publication_and_runtime(assemb
     policies = json.dumps(_resources({"RuntimeStack": templates["RuntimeStack"]}, "AWS::IAM::Policy"))
     assert "secret:trial-selected/research-key-*" in policies
     assert "secret:trial-selected/tavily-api-key-*" not in policies
+
+
+@pytest.mark.parametrize("prefix", ["amlas", "trial-a"])
+def test_runtime_case_tag_read_is_separate_and_owned_processing_scoped(assemblies, prefix):
+    _, templates = assemblies[prefix]
+    policies = _resources({"RuntimeStack": templates["RuntimeStack"]}, "AWS::IAM::Policy")
+    statements = [item for policy in policies for item in policy["PolicyDocument"]["Statement"]]
+    grants = [
+        item
+        for item in statements
+        if "sagemaker:ListTags" in (item["Action"] if isinstance(item["Action"], list) else [item["Action"]])
+    ]
+    assert grants == [
+        {
+            "Sid": "SageMakerProcessingTagRead",
+            "Effect": "Allow",
+            "Action": "sagemaker:ListTags",
+            "Resource": f"arn:aws:sagemaker:us-west-2:111122223333:processing-job/{prefix}-*",
+        },
+        # 2026-11-11: the fine-tune, reload and generation readback reads the tags of owned training jobs too
+        # (test_runtime_reads_ownership_tags_of_owned_training_jobs). The processing statement above is unchanged.
+        {
+            "Sid": "SageMakerTrainingTagRead",
+            "Effect": "Allow",
+            "Action": "sagemaker:ListTags",
+            "Resource": f"arn:aws:sagemaker:us-west-2:111122223333:training-job/{prefix}-*",
+        },
+    ]
+    control_plane = next(item for item in statements if item.get("Sid") == "MlopsControlPlane")
+    assert "sagemaker:ListTags" not in control_plane["Action"]
+    assert control_plane["Resource"] == "*"
+
+
+@pytest.mark.parametrize("prefix", ["amlas", "trial-a"])
+def test_runtime_reads_ownership_tags_of_owned_training_jobs(assemblies, prefix):
+    """The fine-tune, reload and generation readback lists the tags of the deployment's own training jobs."""
+    _, templates = assemblies[prefix]
+    policies = _resources({"RuntimeStack": templates["RuntimeStack"]}, "AWS::IAM::Policy")
+    statements = [item for policy in policies for item in policy["PolicyDocument"]["Statement"]]
+    grants = [item for item in statements if item.get("Sid") == "SageMakerTrainingTagRead"]
+    assert grants == [
+        {
+            "Sid": "SageMakerTrainingTagRead",
+            "Effect": "Allow",
+            "Action": "sagemaker:ListTags",
+            "Resource": f"arn:aws:sagemaker:us-west-2:111122223333:training-job/{prefix}-*",
+        }
+    ]
+    tag_reads = [
+        item["Sid"]
+        for item in statements
+        if "sagemaker:ListTags" in (item["Action"] if isinstance(item["Action"], list) else [item["Action"]])
+    ]
+    assert sorted(tag_reads) == ["SageMakerProcessingTagRead", "SageMakerTrainingTagRead"]

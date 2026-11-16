@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import re
@@ -11,10 +12,77 @@ import subprocess
 import sys
 import time
 import uuid
+from pathlib import Path
+
+# AgentCore refuses a runtime environment whose key and value lengths sum to more than this.
+ENVIRONMENT_LIMIT_BYTES = 4000
+# The selected image expands AMLAS_RUNTIME_ENV_PACK (amlas/_runtime_env_pack.py). An image
+# built before that module ignores a pack, so packing needs this explicit statement.
+PACK_SUPPORT_SWITCH = "AMLAS_RUNTIME_IMAGE_EXPANDS_ENV_PACK"
 
 
 class RuntimeDeployError(RuntimeError):
     """A required control operation or readback failed."""
+
+
+def environment_bytes(environment: dict) -> int:
+    """AgentCore's measure: the sum of key and value lengths, counted in UTF-8 bytes."""
+    return sum(len(key.encode("utf-8")) + len(value.encode("utf-8")) for key, value in environment.items())
+
+
+def _largest(environment: dict) -> str:
+    ranked = sorted(environment, key=lambda key: (-(len(key.encode()) + len(environment[key].encode())), key))
+    return ", ".join(f"{key} {len(key.encode()) + len(environment[key].encode())}" for key in ranked[:3])
+
+
+def _packer():
+    path = Path(__file__).resolve().parents[2] / "src" / "amlas" / "_runtime_env_pack.py"
+    spec = importlib.util.spec_from_file_location("amlas_runtime_env_pack_deploy", path)
+    if not path.is_file() or spec is None or spec.loader is None:
+        raise RuntimeDeployError(
+            "The runtime environment packer is missing; no runtime was created or updated."
+        )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def wire_environment(environment: dict) -> tuple[dict, int, bool]:
+    """Return the map AgentCore stores, its size, and whether it is packed.
+
+    A selection that fits is sent as plain keys, so any image can run it and a
+    rollback to an image without the expander keeps working. A larger selection is
+    packed losslessly and is sent only when the operator states that the selected
+    image expands packs. Every refusal happens before any AgentCore call.
+    """
+    plain = environment_bytes(environment)
+    if plain <= ENVIRONMENT_LIMIT_BYTES:
+        return environment, plain, False
+    packer = _packer()
+    try:
+        packed = packer.pack(environment)
+        if packer.unpack(packed) != environment:
+            raise ValueError("round trip differs")
+    except ValueError as error:
+        raise RuntimeDeployError(
+            f"Runtime environment is {plain} bytes and could not be packed ({error}); "
+            "no runtime was created or updated."
+        ) from None
+    size = environment_bytes(packed)
+    if size > ENVIRONMENT_LIMIT_BYTES:
+        raise RuntimeDeployError(
+            f"Runtime environment is {size} bytes after packing ({plain} bytes plain); AgentCore accepts at most "
+            f"{ENVIRONMENT_LIMIT_BYTES} bytes (sum of key and value lengths). Largest keys: {_largest(packed)}. "
+            "No runtime was created or updated."
+        )
+    if os.environ.get(PACK_SUPPORT_SWITCH) != "1":
+        raise RuntimeDeployError(
+            f"Runtime environment is {plain} bytes; AgentCore accepts at most {ENVIRONMENT_LIMIT_BYTES} bytes "
+            f"(sum of key and value lengths). Largest keys: {_largest(environment)}. It fits as a {size}-byte pack, "
+            f"which only an image built with amlas/_runtime_env_pack.py expands: set {PACK_SUPPORT_SWITCH}=1 for "
+            "such an image. No runtime was created or updated."
+        )
+    return packed, size, True
 
 
 class RuntimeControl:
@@ -155,6 +223,7 @@ class RuntimeControl:
             "AGENTICML_AWS_PROFILE",
         } & environment.keys():
             raise RuntimeDeployError("Developer profiles cannot be injected into a managed runtime.")
+        environment, self.wire_bytes, self.wire_packed = wire_environment(environment)
         tags = json.loads(getattr(options, "tags_json", "{}"))
         if not isinstance(tags, dict) or not all(
             isinstance(key, str) and isinstance(value, str) for key, value in tags.items()
@@ -251,10 +320,13 @@ def main() -> int:
     )
     options = parser.parse_args()
     try:
-        runtime_id, arn, version = RuntimeControl(options.region).deploy(options)
+        control = RuntimeControl(options.region)
+        runtime_id, arn, version = control.deploy(options)
     except (RuntimeDeployError, ValueError, TypeError) as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 1
+    print(f"RUNTIME_ENVIRONMENT_BYTES={control.wire_bytes}")
+    print(f"RUNTIME_ENVIRONMENT_PACKED={1 if control.wire_packed else 0}")
     print(f"AGENTCORE_RUNTIME_ID={runtime_id}")
     print(f"AGENTCORE_RUNTIME_ARN={arn}")
     print(f"AGENTCORE_RUNTIME_VERSION={version}")

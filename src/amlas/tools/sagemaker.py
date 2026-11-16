@@ -78,6 +78,30 @@ class SageMakerSubmitError(RuntimeError):
         self.accepted_job = accepted_job
 
 
+def validate_training_controls(config: dict[str, Any]) -> dict[str, Any]:
+    """Validate native integer controls before any pending/job write."""
+    from botocore.session import Session
+
+    model = Session().get_service_model("sagemaker")
+    resources = model.shape_for("ResourceConfig")
+    stopping = model.shape_for("StoppingCondition")
+    fields = (
+        ("instance_count", 1, resources.members["InstanceCount"]),
+        ("volume_size_gb", 30, resources.members["VolumeSizeInGB"]),
+        ("max_runtime_seconds", 3600, stopping.members["MaxRuntimeInSeconds"]),
+    )
+    result = dict(config)
+    for name, default, shape in fields:
+        value = result.get(name, default)
+        # Native count permits zero only for the alternate InstanceGroups shape;
+        # this submitter emits the ordinary single-group ResourceConfig.
+        minimum, maximum = max(1, shape.metadata.get("min", 1)), shape.metadata.get("max")
+        if type(value) is not int or value < minimum or (maximum is not None and value > maximum):
+            raise ValueError(f"{name} must be an integer in the native API range")
+        result[name] = value
+    return result
+
+
 def submit_training_job(
     *,
     training_type: str,
@@ -97,6 +121,7 @@ def submit_training_job(
     leg (OPEN DECISION 6) — metrics are read back from the real training job via
     :func:`get_training_metrics`.
     """
+    config = validate_training_controls(config)
     runtime_session_id = (
         runtime_session_id or os.environ.get("RUNTIME_SESSION_ID") or f"session-{uuid.uuid4()}"
     )
@@ -272,6 +297,9 @@ def _build_training_channel(config: dict[str, Any], session_bucket: str) -> list
     test_uri = config.get("test_s3_uri")
     if test_uri:
         channels.append(_mk("test", str(test_uri)))
+    validation_uri = config.get("validation_s3_uri")
+    if validation_uri:
+        channels.append(_mk("validation", str(validation_uri)))
     return channels
 
 
@@ -322,15 +350,17 @@ def _create_training_job(
         "OutputDataConfig": {"S3OutputPath": f"s3://{session_bucket}/artifacts/{job_name}/"},
         "ResourceConfig": {
             "InstanceType": instance_type,
-            "InstanceCount": 1,
-            "VolumeSizeInGB": int(config.get("volume_size_gb", 30)),
+            "InstanceCount": config.get("instance_count", 1),
+            "VolumeSizeInGB": config.get("volume_size_gb", 30),
         },
-        "StoppingCondition": {"MaxRuntimeInSeconds": int(config.get("max_runtime_seconds", 3600))},
+        "StoppingCondition": {"MaxRuntimeInSeconds": config.get("max_runtime_seconds", 3600)},
         "Environment": {
             "RUNTIME_SESSION_ID": runtime_session_id,
             "AMLAS_TRAINING_TYPE": training_type,
         },
     }
+    if config.get("target_column") is not None:
+        kwargs["Environment"]["AMLAS_TARGET"] = str(config["target_column"])
 
     tags = deployment_job_tags(runtime_session_id) if job_tags is None else job_tags
     if tags:

@@ -41,6 +41,15 @@ class MemoryClientProto(Protocol):
     ) -> dict[str, Any]: ...
 
 
+def _record_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Copy each message without the SDK's top-level ``tracking_id``; the live messages stay untouched.
+
+    Strands 1.65.0 puts that random id on every live message. The Memory client receives the shape
+    Strands 1.42.0 produced: every other key is kept, and so is a nested key of the same name.
+    """
+    return [{key: value for key, value in message.items() if key != "tracking_id"} for message in messages]
+
+
 class MemoryHookProvider(HookProvider):
     """HookProvider that pulls history on init and persists new messages on turn boundaries."""
 
@@ -100,7 +109,7 @@ class MemoryHookProvider(HookProvider):
                 memory_id=self.memory_id,
                 actor_id=self.actor_id,
                 session_id=self.session_id,
-                messages=new,
+                messages=_record_messages(new),
             )
             self._messages_seen = len(agent.messages)
         except Exception:  # nosec B110

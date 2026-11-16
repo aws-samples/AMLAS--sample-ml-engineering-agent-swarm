@@ -23,6 +23,7 @@ Readiness precondition: when an ``evidence``/``readiness_review`` is supplied (o
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -38,7 +39,7 @@ __all__ = ["DeployFlowResult", "execute_deploy_flow", "run_deploy_flow"]
 class DeployFlowResult:
     """The invariant output contract of one ``deploy_flow`` run."""
 
-    status: str  # "deployed" | "rolled_back" | "blocked_by_readiness" | "failed" | "denied"
+    status: str  # "deployed" | "waiting" | "rolled_back" | "blocked_by_readiness" | "failed" | "denied"
     approved: bool = True
     endpoint_name: str = ""
     mode: str = ""
@@ -90,23 +91,35 @@ def execute_deploy_flow(
                                     detail={"reason": "readiness_flow returned no_go — deploy refused",
                                             "blocking": rr.blocking})
 
-    # ── 1. package the model (T-DEPLOY-09) ──────────────────────────────────────
-    pkg = raw(D.package_model)(model)
-    if pkg.get("success") is False:
-        return DeployFlowResult(status="failed", readiness=readiness, detail={"stage": "package", "error": pkg.get("error")})
-
-    # ── 2. choose the rollout strategy (T-PR-62) ────────────────────────────────
-    strategy = raw(D.select_deployment_strategy)(model, slas=slas, traffic_profile=traffic_profile, steering=steering)
-    chosen_mode = mode or strategy.get("mode", "realtime")
-
-    # ── 3. deploy the endpoint (T-DEPLOY-01) ────────────────────────────────────
-    deploy = raw(D.deploy_endpoint)(model, mode=chosen_mode, resources=resources)
+    # ── 1–3. retain and consume the exact package in this approved flow ─────────
+    stage = "package"
+    try:
+        with D._packaged_deployment(model, image=(resources or {}).get("image"),
+                                   env=(resources or {}).get("env")) as original:
+            pkg = D._package_result(original)
+            stage = "strategy"
+            strategy = raw(D.select_deployment_strategy)(model, slas=slas, traffic_profile=traffic_profile, steering=steering)
+            chosen_mode = mode or strategy.get("mode", "realtime")
+            stage = "deploy"
+            deploy = raw(D.deploy_endpoint)(original, mode=chosen_mode, resources=resources)
+    except Exception as error:
+        return DeployFlowResult(status="failed", readiness=readiness,
+                                detail={"stage": stage, "error": str(error)})
     if deploy.get("success") is False:
-        return DeployFlowResult(status="failed", readiness=readiness, package=pkg, strategy=strategy,
-                                detail={"stage": "deploy", "error": deploy.get("error")})
+        return DeployFlowResult(status="waiting" if deploy.get("outcome_unknown") is True else "failed",
+                                readiness=readiness, package=pkg, strategy=strategy,
+                                detail={"stage": "deploy", "error": deploy.get("error"), "deploy": deploy})
     endpoint_name = deploy["endpoint_name"]
     adapter = deploy.get("adapter", "")
     ep_backend = "local" if adapter == "local" else "sagemaker"
+    native_status = deploy.get("status", "Unknown")
+    if native_status != "InService":
+        return DeployFlowResult(
+            status="failed" if native_status in {"Failed", "UpdateRollbackFailed"} else "waiting",
+            endpoint_name=endpoint_name, mode=chosen_mode, package=pkg, strategy=strategy,
+            readiness=readiness, adapter=adapter,
+            detail={"stage": "endpoint_observation", "deploy": deploy},
+        )
 
     # ── 4. smoke invoke (T-DEPLOY-02) — rollback on failure ─────────────────────
     prediction = None
@@ -133,7 +146,7 @@ def execute_deploy_flow(
     # ── 7. wire monitoring placeholder (T-MON-01) ───────────────────────────────
     monitoring: dict[str, Any] = {}
     if wire_monitoring:
-        monitoring = _wire_monitoring(endpoint_name)
+        monitoring = _wire_monitoring(endpoint_name, endpoint_arn=deploy.get("arn", ""))
 
     # ── 8. (optional) edge/embedded deploy branch (G3, T-DEPLOY-10b) ────────────
     # When an ``edge_target`` is requested, the model is ALSO compiled (Neo) + packaged +
@@ -168,7 +181,7 @@ def execute_deploy_flow(
     )
 
 
-def _wire_monitoring(endpoint_name: str) -> dict[str, Any]:
+def _wire_monitoring(endpoint_name: str, *, endpoint_arn: str = "") -> dict[str, Any]:
     """Wire a monitoring schedule at deploy time (T-MON-01) — best-effort placeholder.
 
     M4 wires the MonitoringBackend ``setup`` (the OTEL/local adapter offline; Model Monitor
@@ -182,8 +195,24 @@ def _wire_monitoring(endpoint_name: str) -> dict[str, Any]:
         resolved = REGISTRY.resolve(MonitoringBackend)
         ref = resolved.adapter.setup(endpoint=endpoint_name, baseline_uri="",
                                      monitor_types=["data_quality"], schedule="hourly")
+        arn = getattr(ref, "arn", "")
+        name = getattr(ref, "name", "")
+        endpoint_parts = endpoint_arn.split(":", 5) if type(endpoint_arn) is str else []
+        schedule_parts = arn.split(":", 5) if type(arn) is str else []
+        wired = (
+            type(name) is str and re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", name) is not None
+            and len(endpoint_parts) == len(schedule_parts) == 6
+            and endpoint_parts[0] == "arn" and endpoint_parts[1] in {"aws", "aws-cn", "aws-us-gov"}
+            and endpoint_parts[2] == "sagemaker"
+            and re.fullmatch(r"[a-z]{2}(?:-[a-z]+)+-[0-9]+", endpoint_parts[3]) is not None
+            and re.fullmatch(r"[0-9]{12}", endpoint_parts[4]) is not None
+            and endpoint_parts[5] == f"endpoint/{endpoint_name}"
+            and schedule_parts[:5] == endpoint_parts[:5]
+            and schedule_parts[5] == f"monitoring-schedule/{name}"
+        )
         return {"schedule_name": getattr(ref, "name", ""), "monitor_type": getattr(ref, "monitor_type", ""),
-                "adapter": resolved.adapter_name, "wired": True}
+                "schedule_arn": arn if wired else "", "adapter": resolved.adapter_name,
+                "status": "configured" if wired else "degraded", "wired": wired}
     except Exception as e:
         return {"wired": False, "note": f"monitoring setup deferred: {e}"}
 

@@ -26,6 +26,83 @@ def test_repository_authority_policy_is_explicit() -> None:
         assert statement in policy
 
 
+def _policy_sentences() -> str:
+    """Return the root rule text with line wrapping removed so whole sentences can be pinned."""
+    return " ".join((ROOT / "AGENTS.md").read_text(encoding="utf-8").split())
+
+
+def test_release_form_adds_one_commit_by_a_plain_push() -> None:
+    policy = _policy_sentences()
+    required_statements = (
+        "The tips of the two `main` branches have different commit IDs because GitLab retains "
+        "development history while each GitHub release is one commit.",
+        "After explicit approval, publish that exact tree to GitHub `main` as one new commit on top "
+        "of the current GitHub `main`, using a plain push that is never forced.",
+        "The new release commit must have the approved release tree.",
+        "The first GitHub release was a root commit, and every later GitHub release adds one commit.",
+        "Undo a wrong release with a revert commit.",
+        "GitHub `main` history is never rewritten or force-pushed, and the first GitHub release is "
+        "the root commit of GitHub `main`.",
+        "Each later GitHub release adds one commit above all commits already on GitHub `main`.",
+    )
+    kept_statements = (
+        "Present the exact candidate tree hash and material scan results for human approval.",
+        "Never publish to GitHub first and sanitize afterward.",
+        "Human approval applies to the exact tree hash.",
+        "Treat every GitHub write as public disclosure, even when repository visibility is "
+        "temporarily private.",
+    )
+    retired_phrases = ("fresh-root", "force-with-lease")
+    problems = [f"missing: {statement}" for statement in required_statements if statement not in policy]
+    problems += [f"dropped: {statement}" for statement in kept_statements if statement not in policy]
+    problems += [f"retired phrase present: {phrase}" for phrase in retired_phrases if phrase in policy]
+    assert problems == []
+
+
+def test_github_first_change_has_a_recovery_step() -> None:
+    policy = _policy_sentences()
+    required_statements = (
+        "### Changes that land on GitHub first",
+        "Keep GitLab branch `mirror/github-main` at exactly the commits of GitHub `main`, and advance "
+        "`mirror/github-main` only forward.",
+        "Bring a change that has landed on GitHub first into GitLab `main` through a merge request.",
+        "The merge commit for a GitHub-first recovery merge request must have GitLab `main` as first "
+        "parent and GitHub `main` as second parent, and the merge commit's tree must equal the tree "
+        "of GitHub `main`.",
+        "Preserve all original commits with their authors and commit IDs without rewriting any commits.",
+        "After a GitHub-first recovery merge, GitLab `main` contains GitHub `main`.",
+    )
+    kept_statements = (
+        "Development work occurs on GitLab feature branches.",
+        "Do not develop directly on either platform's `main` branch.",
+        "No change reaches GitHub until a human approves the sanitized public snapshot.",
+    )
+    problems = [f"missing: {statement}" for statement in required_statements if statement not in policy]
+    problems += [f"dropped: {statement}" for statement in kept_statements if statement not in policy]
+    assert problems == []
+
+
+def test_release_gate_states_the_small_update_exception() -> None:
+    policy = _policy_sentences()
+    heading = "### GitHub release regression and core-functionality gate"
+    assert policy.count(heading) == 1
+    gate = policy.split(heading, 1)[1].split("### ", 1)[0]
+    small_update = (
+        "Small documentation, artwork, metadata, and narrowly scoped dependency updates do not "
+        "require a full deployed ML rerun. Run relevant code tests and dependency/security checks; "
+        "for MCP or other SDK changes, include the affected integration and compatibility tests. "
+        "Preserve the required native CI gates and record why the scope qualifies for this exception."
+    )
+    kept_statements = (
+        "Focused tests alone do not qualify a release.",
+        "Any failed, missing, incomplete, or unverifiable required check blocks publication.",
+        "Passing checks does not itself authorize a GitHub write.",
+    )
+    problems = [] if small_update in gate else [f"missing: {small_update}"]
+    problems += [f"dropped: {statement}" for statement in kept_statements if statement not in gate]
+    assert problems == []
+
+
 def test_anyio_security_floor_is_declared() -> None:
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     dependencies = pyproject["project"]["dependencies"]

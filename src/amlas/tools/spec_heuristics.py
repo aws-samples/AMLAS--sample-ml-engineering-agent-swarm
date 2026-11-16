@@ -14,9 +14,14 @@ from __future__ import annotations
 
 import re
 
-GENERATION_TASKS = frozenset({
-    "text_generation", "code_generation", "language_modeling", "causal_lm",
-})
+GENERATION_TASKS = frozenset(
+    {
+        "text_generation",
+        "code_generation",
+        "language_modeling",
+        "causal_lm",
+    }
+)
 
 
 def resolve_task_modality(problem_type: str, modality: str | None = None) -> str:
@@ -47,11 +52,17 @@ def _infer_task_type(text: str) -> str:
     lower = re.sub(
         r"\b(?:not|never|without|rather\s+than)\s+(?:(?:a|an)\s+)?"
         r"(?:classification|classifier|regression|regressor)\b",
-        "", lower,
+        "",
+        lower,
     )
+    # Code-generation evidence nine real-model test runs used without the older phrases: a versioned Qwen model
+    # name (``qwen3.5``; ``\bqwen\b`` never matches it), the pass@1 metric and the HumanEval benchmark.
     generation = re.search(
         r"\btext[\s_-]+generation\b|\bcode[\s_-]+generation\b|"
-        r"\blanguage[\s_-]+model(?:s|ing)?\b|\bcoding[\s_-]+models?\b",
+        r"\blanguage[\s_-]+model(?:s|ing)?\b|\bcoding[\s_-]+models?\b|"
+        r"\bcoding[\s_-]+assist(?:ant|ance)\b|"
+        r"\b(?:fine[\s_-]?tun(?:e|ing)|sft)\b[^.]*\bqwen\b|"
+        r"\bqwen\d|\bhumaneval\b|\bpass(?:@|[\s_-]*at[\s_-]*)1\b",
         lower,
     )
     explicit_classification = re.search(r"\bclassif(?:y|ication|ier)\b", lower)
@@ -64,16 +75,38 @@ def _infer_task_type(text: str) -> str:
         return "text_generation"
 
     regression_keywords = [
-        "forecast", "estimate", "predict.*value", "predict.*price",
-        "predict.*amount", "regression", "continuous", "rmse", "mae",
-        "mean squared", "mean absolute",
+        "forecast",
+        "estimate",
+        "predict.*value",
+        "predict.*price",
+        "predict.*amount",
+        "regression",
+        "continuous",
+        "rmse",
+        "mae",
+        "mean squared",
+        "mean absolute",
     ]
     classification_keywords = [
-        "classify", "classification", "predict.*whether",
-        "predict.*if", "predict.*which", "binary", "multiclass",
-        "transported", "churn", "fraud", "spam", "label",
-        "category", "f1", "accuracy", "precision", "recall",
-        "auc", "roc",
+        "classify",
+        "classification",
+        "predict.*whether",
+        "predict.*if",
+        "predict.*which",
+        "binary",
+        "multiclass",
+        "transported",
+        "churn",
+        "fraud",
+        "spam",
+        "label",
+        "category",
+        "f1",
+        "accuracy",
+        "precision",
+        "recall",
+        "auc",
+        "roc",
     ]
 
     def _count(keywords: list[str]) -> int:
@@ -113,8 +146,8 @@ def _extract_target_column(text: str) -> str:
     return "target"
 
 
-def _extract_metric(text: str) -> str:
-    """Extract primary metric from description."""
+def _extract_metric(text: str, task_type: str | None = None) -> str:
+    """Extract primary metric from description (``task_type`` overrides the inferred type for the fallback)."""
     lower = text.lower()
 
     metric_patterns = [
@@ -138,14 +171,14 @@ def _extract_metric(text: str) -> str:
         if re.search(pattern, lower):
             return metric_name
 
-    task = _infer_task_type(text)
+    task = task_type or _infer_task_type(text)
     if task == "text_generation":
         return ""
     return "f1_macro" if task == "classification" else "rmse"
 
 
-def _extract_threshold(text: str) -> float | None:
-    """Extract success threshold from description."""
+def _extract_threshold(text: str, task_type: str | None = None) -> float | None:
+    """Extract success threshold from description (``task_type`` overrides the inferred type for the default)."""
     lower = text.lower()
 
     patterns = [
@@ -163,7 +196,7 @@ def _extract_threshold(text: str) -> float | None:
                 return value / 100.0
             return value
 
-    task = _infer_task_type(text)
+    task = task_type or _infer_task_type(text)
     if task == "text_generation":
         return None
     return 0.80 if task == "classification" else 10.0

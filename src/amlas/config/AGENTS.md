@@ -11,6 +11,8 @@ by shell setup, CDK stacks, runtime discovery, and managed-job callers.
 
 ## Local Contracts
 
+- [Added 2026-11-05] `AMLAS_GUARDRAIL_ENABLED` controls guardrail checks at call time independently of a provisioned id. In-band model binding still requires an id. Disabled checks report `action=DISABLED`, `enabled=false`, `passed=false`; they never establish safety-pass evidence.
+
 - `deployment.py` uses only the Python standard library. Running it directly emits
   JSON `deployment_prefix` and `ssm_prefix`; invalid selectors exit with status 2.
   Shell setup must be able to validate names before installing project dependencies.
@@ -43,11 +45,38 @@ by shell setup, CDK stacks, runtime discovery, and managed-job callers.
   bucket from the runtime environment when no explicit adapter/resource value is supplied.
 - `externalized.py` also resolves `sagemaker_execution_role_arn` from the existing
   execution-role environment aliases or selected SSM binding; unresolved remains empty.
+- `DATA_ACQUISITION_BACKEND` selects Processing by default or explicit local/offline
+  execution. `AMLAS_DATA_ACQUISITION_IMAGE_URI` requires an ECR digest, and
+  `AMLAS_DATA_ACQUISITION_SOURCE_COMMIT` names its published source commit.
+  Missing managed acquisition bindings never become placeholder resources.
+- Acquisition image/source discover through selected SSM suffixes as well as
+  explicit environment selectors; configured env values retain precedence.
+- Fixed inspection resolves `AMLAS_DATA_INSPECTION_IMAGE_URI`,
+  `AMLAS_DATA_INSPECTION_SOURCE_COMMIT` and `AMLAS_DATA_INSPECTION_ADMISSION_DIGEST`
+  through env/selected SSM. Missing/stale admission fails before ordinary writes;
+  root/operator native probes establish the exact-image admission marker.
 - Model defaults and admission are shared by chat/role selectors, CDK and shell
   preflight/IAM generation. Canonical, legacy and explicit overrides retain precedence.
   Direct Bedrock consumers use the shared sampling/cache compatibility policy.
 - Execution roles and chat default to Sonnet 5.5; the independent reviewer defaults
   to GPT-6.1 Sol. GPT requests omit explicit Converse cache points and sampling.
+
+- `resolve_env_snapshot` reads only explicit ENV aliases, without SSM, local profile
+  discovery, safe resource defaults or required-value coercion. This is the startup
+  snapshot seam for a typed UNADMITTED preparation catalog.
+- Preparation registers `AMLAS_DATA_PREPARATION_IMAGE_URI`, `SOURCE_COMMIT`,
+  `ADMISSION_DIGEST`, `EXCLUSIONS_URI`, `EXCLUSIONS_VERSION_ID`, `EXCLUSIONS_SHA256`,
+  and `EXCLUSIONS_BYTE_COUNT` under the common DATA_PREPARATION prefix and matching
+  selected SSM suffixes. None has a synthetic image, marker or exclusions default.
+
+- Model acquisition registers IMAGE_URI/SOURCE_COMMIT/ADMISSION_DIGEST under
+  AMLAS_MODEL_WEIGHT_ACQUISITION and matching selected SSM suffixes, with no
+  resource/marker defaults. model_weight_acquisition_selectors is an ENV-only
+  startup snapshot: all absent is unconfigured, partial/malformed/foreign or
+  digest-mismatched tuples refuse. A matching tuple remains UNADMITTED/descriptive;
+  no SDK/SSM call or readiness grant occurs at startup.
+
+- Qwen SFT registers IMAGE_URI/SOURCE_COMMIT/ADMISSION_DIGEST under AMLAS_QWEN_SFT and selected SSM suffixes. ENV-only startup snapshots carry no synthetic admission or required resource defaults.
 
 ## Work Guidance
 

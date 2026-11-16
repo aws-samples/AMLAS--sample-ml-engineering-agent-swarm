@@ -71,10 +71,37 @@ RUNTIME_NAME=${AGENTCORE_RUNTIME_NAME:-${DEPLOYMENT_PREFIX//-/_}}
 EXEC_ROLE_NAME=${AGENTCORE_EXEC_ROLE_NAME:-${DEPLOYMENT_PREFIX}-runtime-exec-${REGION}}
 IMAGE_TAG=${IMAGE_TAG:-v1}
 IMAGE_URI=${ACCT}.dkr.ecr.${REGION}.amazonaws.com/${DEPLOYMENT_PREFIX}-runtime:${IMAGE_TAG}
+# Optional: IMAGE_DIGEST (sha256:<64 lower-case hex>) names one image manifest of the same repository. The runtime
+# is then created or updated by digest, so what it runs cannot change under the tag. Any other value is refused
+# before a resource is read or changed. scripts/setup.sh does not set it; a caller that pushes the image itself does.
+if [ -n "${IMAGE_DIGEST:-}" ]; then
+  [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || die "Invalid IMAGE_DIGEST; no runtime resources were changed."
+  IMAGE_URI=${ACCT}.dkr.ecr.${REGION}.amazonaws.com/${DEPLOYMENT_PREFIX}-runtime@${IMAGE_DIGEST}
+fi
 NETWORK_MODE=${AGENTCORE_NETWORK_MODE:-PUBLIC}
 SERVER_PROTOCOL=${AGENTCORE_SERVER_PROTOCOL:-HTTP}
 [[ "$RUNTIME_NAME" =~ ^[A-Za-z][A-Za-z0-9_]{0,47}$ ]] || die "Invalid runtime name."
+# Passed through to the runtime when set (below). The runtime knows only these values; refuse others before any
+# write, so a typo cannot reach a deployed runtime or silently switch guardrail checks off.
+if [ -n "${AMLAS_RUNTIME_RESEARCH_PROFILE+set}" ]; then
+  case "$AMLAS_RUNTIME_RESEARCH_PROFILE" in qwen9b_core_v1|off) ;; *) die "Invalid AMLAS_RUNTIME_RESEARCH_PROFILE; no runtime resources were changed." ;; esac
+fi
+if [ -n "${AMLAS_GUARDRAIL_ENABLED+set}" ]; then
+  case "$AMLAS_GUARDRAIL_ENABLED" in true|false) ;; *) die "Invalid AMLAS_GUARDRAIL_ENABLED (true or false); no runtime resources were changed." ;; esac
+fi
 [[ "$EXEC_ROLE_NAME" =~ ^[A-Za-z0-9_+=,.@-]{1,64}$ ]] || die "Invalid execution-role name."
+
+python3 "$(dirname "${BASH_SOURCE[0]}")/preparation_release_config.py" --account "$ACCT" --region "$REGION" --prefix "$SSM_PREFIX" --env-only >/dev/null   || die "Invalid preparation configuration; no runtime resources were changed."
+python3 "$(dirname "${BASH_SOURCE[0]}")/model_acquisition_release_config.py" --account "$ACCT" --region "$REGION" --prefix "$SSM_PREFIX" --env-only >/dev/null   || die "Invalid model acquisition configuration; no runtime resources were changed."
+validate_acquisition_release_config "$ACCT" "$REGION" \
+  "${AMLAS_DATA_ACQUISITION_IMAGE_URI:-}" "${AMLAS_DATA_ACQUISITION_SOURCE_COMMIT:-}" \
+  || die "Invalid acquisition release configuration; no runtime resources were changed."
+validate_inspection_release_config "$ACCT" "$REGION" \
+  "${AMLAS_DATA_INSPECTION_IMAGE_URI:-}" "${AMLAS_DATA_INSPECTION_SOURCE_COMMIT:-}" \
+  "${AMLAS_DATA_INSPECTION_ADMISSION_DIGEST:-}" \
+  || die "Invalid inspection release configuration; no runtime resources were changed."
+_SM_ROLE_ARN=${SAGEMAKER_EXECUTION_ROLE_ARN:-${AMLAS_SAGEMAKER_ROLE_ARN:-arn:aws:iam::${ACCT}:role/${DEPLOYMENT_PREFIX}-sagemaker-exec}}
+validate_selected_sagemaker_role_arn "$_SM_ROLE_ARN" "$ACCT"
 
 # Preflight existing selections before unrelated setup writes. A new role needs no stack outputs yet.
 if [ "${AMLAS_RUNTIME_PREFLIGHT_ONLY:-0}" = "1" ]; then
@@ -100,18 +127,14 @@ fi
 # role had NO iam:PassRole grant for → AccessDeniedException, blocking every dispatch. Default to
 # the canonical amlas-sagemaker-exec, which (a) exists and (b) is what AsyncTrainingStack exports
 # (SageMakerExecutionRoleArnOut). Still env-overridable, but the override must match a PassRole grant.
-_SM_ROLE_ARN=${SAGEMAKER_EXECUTION_ROLE_ARN:-${AMLAS_SAGEMAKER_ROLE_ARN:-arn:aws:iam::${ACCT}:role/${DEPLOYMENT_PREFIX}-sagemaker-exec}}
-# BUGFIX (cross-account deploy): reject a stale env SageMaker-role ARN that points at a DIFFERENT
-# account than the live one — a .env carried over from another account (e.g. account 000000000000)
-# would otherwise pass a foreign role the runtime-exec role has no PassRole for. If the resolved
-# ARN's embedded account != ${ACCT}, fall back to this account's canonical amlas-sagemaker-exec.
-_SM_ROLE_ACCT=$(printf '%s' "$_SM_ROLE_ARN" | sed -n 's#^arn:aws:iam::\([0-9]\{12\}\):.*#\1#p')
-if [ -n "${_SM_ROLE_ACCT}" ] && [ "${_SM_ROLE_ACCT}" != "${ACCT}" ]; then
-  echo "WARN: SAGEMAKER role ARN ${_SM_ROLE_ARN} is for account ${_SM_ROLE_ACCT}, not ${ACCT} — overriding with this account's amlas-sagemaker-exec."
-  _SM_ROLE_ARN="arn:aws:iam::${ACCT}:role/${DEPLOYMENT_PREFIX}-sagemaker-exec"
-fi
 _ETL_BACKEND=${ETL_BACKEND:-processing}
 _DQ_BACKEND=${DQ_BACKEND:-processing}
+# Initial setup may create the default role in its selected stacks. Preflight
+# validates the selection; normal deployment reads native identity/service trust.
+if [ "${AMLAS_RUNTIME_PREFLIGHT_ONLY:-0}" != "1" ]; then
+  verify_selected_sagemaker_role "$_SM_ROLE_ARN" "$ACCT" \
+    || die "Selected SageMaker execution role failed verification."
+fi
 # CLI shorthand: comma-separated key=value pairs.
 RUNTIME_ENV="ETL_BACKEND=${_ETL_BACKEND},DQ_BACKEND=${_DQ_BACKEND},SAGEMAKER_EXECUTION_ROLE_ARN=${_SM_ROLE_ARN},AMLAS_AWS_REGION=${REGION}"
 # Local named profiles are never injected into the managed runtime: it uses its
@@ -145,6 +168,8 @@ fi
 echo "RUNTIME_ENV=${RUNTIME_ENV}"
 require_runtime_cli_capabilities || exit $?
 account_safety_gate "$ACCT"
+resolve_preparation_release_config "$ACCT" "$REGION" "$SSM_PREFIX"   || die "Invalid preparation configuration; no runtime resources were changed."
+resolve_model_acquisition_release_config "$ACCT" "$REGION" "$SSM_PREFIX"   || die "Invalid model acquisition configuration; no runtime resources were changed."
 
 # Session bucket the runtime-exec role must read/write (staging).
 # BUGFIX (net-new / cross-account deploy): the comment always said "prefer the CFN export, then
@@ -401,14 +426,19 @@ POLICY_JSON=$(cat <<JSON
     {"Sid":"EcrPullAuth","Effect":"Allow","Action":["ecr:GetAuthorizationToken"],"Resource":"*"},
     {"Sid":"EcrPullImage","Effect":"Allow","Action":["ecr:BatchCheckLayerAvailability","ecr:GetDownloadUrlForLayer","ecr:BatchGetImage"],"Resource":"arn:aws:ecr:${REGION}:${ACCT}:repository/${DEPLOYMENT_PREFIX}-runtime"},
     {"Sid":"SessionBucketRW","Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject","s3:ListBucket"],"Resource":["arn:aws:s3:::${SESSION_BUCKET}","arn:aws:s3:::${SESSION_BUCKET}/*"]},
+    {"Sid":"SessionVersioningRead","Effect":"Allow","Action":["s3:GetBucketLocation","s3:GetBucketVersioning"],"Resource":"arn:aws:s3:::${SESSION_BUCKET}"},
+    {"Sid":"SessionVersionArtifactRead","Effect":"Allow","Action":["s3:GetObjectVersion"],"Resource":"arn:aws:s3:::${SESSION_BUCKET}/*"},
     {"Sid":"LakeBucketRW","Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject","s3:ListBucket"],"Resource":["arn:aws:s3:::${LAKE_BUCKET}","arn:aws:s3:::${LAKE_BUCKET}/*"]},
     {"Sid":"CloudWatchLogs","Effect":"Allow","Action":["logs:CreateLogGroup","logs:CreateLogStream","logs:PutLogEvents","logs:DescribeLogStreams"],"Resource":"arn:aws:logs:${REGION}:${ACCT}:log-group:/aws/bedrock-agentcore/*"},
     {"Sid":"SageMakerCreateScoped","Effect":"Allow","Action":["sagemaker:CreateTrainingJob","sagemaker:CreateProcessingJob"],"Resource":["arn:aws:sagemaker:${REGION}:${ACCT}:training-job/${DEPLOYMENT_PREFIX}-*","arn:aws:sagemaker:${REGION}:${ACCT}:processing-job/${DEPLOYMENT_PREFIX}-*"]},
     {"Sid":"SageMakerJobTags","Effect":"Allow","Action":["sagemaker:AddTags"],"Resource":["arn:aws:sagemaker:${REGION}:${ACCT}:training-job/${DEPLOYMENT_PREFIX}-*","arn:aws:sagemaker:${REGION}:${ACCT}:processing-job/${DEPLOYMENT_PREFIX}-*"]},
+    {"Sid":"SageMakerProcessingTagRead","Effect":"Allow","Action":["sagemaker:ListTags"],"Resource":["arn:aws:sagemaker:${REGION}:${ACCT}:processing-job/${DEPLOYMENT_PREFIX}-*"]},
+    {"Sid":"SageMakerTrainingTagRead","Effect":"Allow","Action":["sagemaker:ListTags"],"Resource":["arn:aws:sagemaker:${REGION}:${ACCT}:training-job/${DEPLOYMENT_PREFIX}-*"]},
     {"Sid":"SageMakerList","Effect":"Allow","Action":["sagemaker:ListTrainingJobs","sagemaker:ListProcessingJobs"],"Resource":"*"},
     {"Sid":"SageMakerScoped","Effect":"Allow","Action":["sagemaker:DescribeTrainingJob","sagemaker:StopTrainingJob","sagemaker:DescribeProcessingJob","sagemaker:StopProcessingJob"],"Resource":["arn:aws:sagemaker:${REGION}:${ACCT}:training-job/${JOB_READ_SCOPE}","arn:aws:sagemaker:${REGION}:${ACCT}:processing-job/${JOB_READ_SCOPE}"]},
     {"Sid":"PassSageMakerRole","Effect":"Allow","Action":["iam:PassRole"],"Resource":"${SAGEMAKER_ROLE_ARN}","Condition":{"StringEquals":{"iam:PassedToService":"sagemaker.amazonaws.com"}}},
     {"Sid":"DdbJobs","Effect":"Allow","Action":["dynamodb:GetItem","dynamodb:PutItem","dynamodb:UpdateItem","dynamodb:Query"],"Resource":["arn:aws:dynamodb:${REGION}:${ACCT}:table/${DDB_JOBS_TABLE}","arn:aws:dynamodb:${REGION}:${ACCT}:table/${DDB_JOBS_TABLE}/index/*"]},
+    {"Sid":"DdbJobsMetadataRead","Effect":"Allow","Action":["dynamodb:DescribeTable"],"Resource":"arn:aws:dynamodb:${REGION}:${ACCT}:table/${DDB_JOBS_TABLE}"},
     {"Sid":"EventsPut","Effect":"Allow","Action":["events:PutEvents"],"Resource":"arn:aws:events:${REGION}:${ACCT}:event-bus/default"},
     {"Sid":"AgentCorePrimitives","Effect":"Allow","Action":["bedrock-agentcore:CreateCodeInterpreter","bedrock-agentcore:StartCodeInterpreterSession","bedrock-agentcore:InvokeCodeInterpreter","bedrock-agentcore:StopCodeInterpreterSession","bedrock-agentcore:ListCodeInterpreters","bedrock-agentcore:GetCodeInterpreter","bedrock-agentcore:CreateMemory","bedrock-agentcore:GetMemory","bedrock-agentcore:ListEvents","bedrock-agentcore:CreateEvent","bedrock-agentcore:ListSessions"],"Resource":"*"},
     {"Sid":"InvokeOwnHarnesses","Effect":"Allow","Action":["bedrock-agentcore:InvokeHarness","bedrock-agentcore:InvokeAgentRuntime"],"Resource":"arn:aws:bedrock-agentcore:${REGION}:${ACCT}:harness/*"},
@@ -470,6 +500,19 @@ except (ValueError, TypeError, KeyError):
     print("Existing execution role is incompatible or unverifiable; choose a distinct --runtime-role-name. No role policy was changed.", file=sys.stderr)
     sys.exit(1)
 COMPARE
+}
+verified_runtime_role_id() {
+  ROLE_DOCUMENT_VALUE="$ROLE_DOCUMENT" python3 - <<'ROLE_IDENTITY'
+import json, os, re, sys
+try:
+    role_id = json.loads(os.environ["ROLE_DOCUMENT_VALUE"])["Role"]["RoleId"]
+    if not isinstance(role_id, str) or not re.fullmatch(r"AROA[A-Z0-9]+", role_id):
+        raise ValueError("Invalid native role identity")
+except (KeyError, TypeError, ValueError):
+    print("Verified execution role has no verifiable native RoleId.", file=sys.stderr)
+    sys.exit(1)
+print(role_id)
+ROLE_IDENTITY
 }
 create_runtime_role_stack() {
   local bootstrap_resources bootstrap_role_name bootstrap_role_document cfn_role_arn
@@ -581,23 +624,13 @@ STACK
   POLICY_DOCUMENT="$(aws iam get-role-policy --role-name "$EXEC_ROLE_NAME" --policy-name "$ROLE_POLICY_NAME" --output json)" \
     || die "CloudFormation-created role policy could not be read back."
   ROLE_ARN="$(verify_role_documents)" || return $?
+  ROLE_ID="$(verified_runtime_role_id)" || return $?
 }
 if ROLE_DOCUMENT="$(aws iam get-role --role-name "$EXEC_ROLE_NAME" --output json 2>&1)"; then
   POLICY_DOCUMENT="$(aws iam get-role-policy --role-name "$EXEC_ROLE_NAME" --policy-name "$ROLE_POLICY_NAME" --output json 2>&1)" || die "Existing role policy is unverifiable; choose a distinct --runtime-role-name."
   ROLE_ARN="$(verify_role_documents)" || exit $?
   case "$ROLE_ARN" in arn:*:iam::"$ACCT":role/*) ;; *) die "IAM returned an invalid execution-role ARN." ;; esac
-  ROLE_ID="$(ROLE_DOCUMENT_VALUE="$ROLE_DOCUMENT" python3 - <<'ROLE_IDENTITY'
-import json, os, re, sys
-try:
-    role_id = json.loads(os.environ["ROLE_DOCUMENT_VALUE"])["Role"]["RoleId"]
-    if not isinstance(role_id, str) or not re.fullmatch(r"AROA[A-Z0-9]+", role_id):
-        raise ValueError("Invalid native role identity")
-except (KeyError, TypeError, ValueError):
-    print("Compatible execution role has no verifiable native RoleId.", file=sys.stderr)
-    sys.exit(1)
-print(role_id)
-ROLE_IDENTITY
-)" || exit $?
+  ROLE_ID="$(verified_runtime_role_id)" || exit $?
   printf 'RESOLVED_REUSED_RUNTIME_ROLE_ARN=%s\n' "$ROLE_ARN"
   printf 'RESOLVED_REUSED_RUNTIME_ROLE_ID=%s\n' "$ROLE_ID"
   echo "Reusing compatible execution role without changing its trust or grants."
@@ -627,12 +660,15 @@ RUNTIME_TAGS
 
 # A JSON map preserves comma-containing values such as AMLAS_HARNESS_LEADS.
 RUNTIME_ENV_JSON="$(ETL_VALUE="$_ETL_BACKEND" DQ_VALUE="$_DQ_BACKEND" ROLE_VALUE="$_SM_ROLE_ARN" \
+  RUNTIME_ROLE_ARN_VALUE="$ROLE_ARN" RUNTIME_ROLE_ID_VALUE="$ROLE_ID" \
   REGION_VALUE="$REGION" ACCOUNT_VALUE="$ACCT" SESSION_VALUE="$SESSION_BUCKET" \
   PREFIX_VALUE="$DEPLOYMENT_PREFIX" SSM_PREFIX_VALUE="$SSM_PREFIX" JOBS_VALUE="$DDB_JOBS_TABLE" LAKE_VALUE="$LAKE_BUCKET" \
   DEPLOYMENT_ID_VALUE="$DEPLOYMENT_ID" MODEL_GROUP_VALUE="$MODEL_PACKAGE_GROUP_VALUE" FEATURE_DB_VALUE="$FEATURE_STORE_DB_VALUE"   SILVER_VALUE="$LAKE_SILVER_PREFIX" GOLD_VALUE="$LAKE_GOLD_PREFIX" GUARDRAIL_ID_VALUE="$GUARDRAIL_ID"   GUARDRAIL_VERSION_VALUE="$GUARDRAIL_VERSION" SECRET_ID_VALUE="$TAVILY_SECRET_SELECTION" python3 - <<'ENVIRONMENT'
 import json, os
 result = {"ETL_BACKEND": os.environ["ETL_VALUE"], "DQ_BACKEND": os.environ["DQ_VALUE"],
           "SAGEMAKER_EXECUTION_ROLE_ARN": os.environ["ROLE_VALUE"],
+          "AMLAS_RUNTIME_EXEC_ROLE_ARN": os.environ["RUNTIME_ROLE_ARN_VALUE"],
+          "AMLAS_RUNTIME_EXEC_ROLE_ID": os.environ["RUNTIME_ROLE_ID_VALUE"],
           "AMLAS_AWS_REGION": os.environ["REGION_VALUE"], "AMLAS_AWS_ACCOUNT_ID": os.environ["ACCOUNT_VALUE"],
           "AMLAS_SESSION_BUCKET": os.environ["SESSION_VALUE"],
           "AMLAS_DEPLOYMENT_PREFIX": os.environ["PREFIX_VALUE"], "AMLAS_SSM_PREFIX": os.environ["SSM_PREFIX_VALUE"],
@@ -644,7 +680,19 @@ result = {"ETL_BACKEND": os.environ["ETL_VALUE"], "DQ_BACKEND": os.environ["DQ_V
 if os.environ["DEPLOYMENT_ID_VALUE"]:
     result["AMLAS_DEPLOYMENT_ID"] = os.environ["DEPLOYMENT_ID_VALUE"]
 for key in ("AMLAS_CHAT_MODEL", "AMLAS_MODEL_PLANNER", "AMLAS_MODEL_REVIEWER", "AMLAS_MODEL_SPECIALIST",
-            "AMLAS_MODEL_BOUNDED", "AMLAS_MODEL_FINETUNE", "AMLAS_HARNESS_LEADS", "AMLAS_TAVILY_KEYLESS"):
+            "AMLAS_MODEL_BOUNDED", "AMLAS_MODEL_FINETUNE", "AMLAS_HARNESS_LEADS", "AMLAS_TAVILY_KEYLESS",
+            "DATA_ACQUISITION_BACKEND", "AMLAS_DATA_ACQUISITION_IMAGE_URI", "AMLAS_DATA_ACQUISITION_SOURCE_COMMIT",
+            "AMLAS_DATA_INSPECTION_IMAGE_URI", "AMLAS_DATA_INSPECTION_SOURCE_COMMIT",
+            "AMLAS_DATA_INSPECTION_ADMISSION_DIGEST",
+            "DATA_PREPARATION_BACKEND", "AMLAS_DATA_PREPARATION_IMAGE_URI", "AMLAS_DATA_PREPARATION_SOURCE_COMMIT", "AMLAS_DATA_PREPARATION_ADMISSION_DIGEST", "AMLAS_DATA_PREPARATION_EXCLUSIONS_URI", "AMLAS_DATA_PREPARATION_EXCLUSIONS_VERSION_ID", "AMLAS_DATA_PREPARATION_EXCLUSIONS_SHA256", "AMLAS_DATA_PREPARATION_EXCLUSIONS_BYTE_COUNT",
+            "AMLAS_RUNTIME_APPROVED_ACTIONS",
+            "CODING_PAIR_BACKEND", "AMLAS_CODING_PAIR_IMAGE_URI", "AMLAS_CODING_PAIR_SOURCE_COMMIT", "AMLAS_CODING_PAIR_ADMISSION_DIGEST", "AMLAS_CODING_PAIR_LAUNCHER_SHA256",
+            "CODING_GENERATION_BACKEND", "AMLAS_CODING_GENERATION_IMAGE_URI", "AMLAS_CODING_GENERATION_SOURCE_COMMIT", "AMLAS_CODING_GENERATION_ADMISSION_DIGEST",
+            "CODING_CASE_FREEZE_BACKEND", "AMLAS_CODING_CASE_FREEZE_IMAGE_URI", "AMLAS_CODING_CASE_FREEZE_SOURCE_COMMIT", "AMLAS_CODING_CASE_FREEZE_ADMISSION_DIGEST",
+            "QWEN_SFT_BACKEND", "AMLAS_QWEN_SFT_IMAGE_URI", "AMLAS_QWEN_SFT_SOURCE_COMMIT", "AMLAS_QWEN_SFT_ADMISSION_DIGEST",
+            "MODEL_WEIGHT_ACQUISITION_BACKEND", "AMLAS_MODEL_WEIGHT_ACQUISITION_IMAGE_URI", "AMLAS_MODEL_WEIGHT_ACQUISITION_SOURCE_COMMIT", "AMLAS_MODEL_WEIGHT_ACQUISITION_ADMISSION_DIGEST",
+            "AMLAS_AGENT_REMOTE_FETCH", "AMLAS_AGENT_HTTP_ALLOW_HOSTS",
+            "AMLAS_RUNTIME_RESEARCH_PROFILE", "AMLAS_GUARDRAIL_ENABLED"):
     if key in os.environ:
         result[key] = os.environ[key]
 print(json.dumps(result))
@@ -654,6 +702,19 @@ if python3 "$(dirname "${BASH_SOURCE[0]}")/agentcore_runtime_control.py" --regio
   --name "$RUNTIME_NAME" --image "$IMAGE_URI" --role "$ROLE_ARN" --network-mode "$NETWORK_MODE" \
   --protocol "$SERVER_PROTOCOL" --environment-json "$RUNTIME_ENV_JSON" --tags-json "$RUNTIME_TAGS_JSON" ; then
   printf 'RESOLVED_SESSION_BUCKET=%s\n' "$SESSION_BUCKET"
+  printf 'RESOLVED_SAGEMAKER_ROLE_ARN=%s\n' "$_SM_ROLE_ARN"
+  printf 'RESOLVED_DATA_ACQUISITION_IMAGE_URI=%s\n' "${AMLAS_DATA_ACQUISITION_IMAGE_URI:-}"
+  printf 'RESOLVED_DATA_ACQUISITION_SOURCE_COMMIT=%s\n' "${AMLAS_DATA_ACQUISITION_SOURCE_COMMIT:-}"
+  printf 'RESOLVED_DATA_INSPECTION_IMAGE_URI=%s\n' "${AMLAS_DATA_INSPECTION_IMAGE_URI:-}"
+  printf 'RESOLVED_DATA_INSPECTION_SOURCE_COMMIT=%s\n' "${AMLAS_DATA_INSPECTION_SOURCE_COMMIT:-}"
+  printf 'RESOLVED_DATA_INSPECTION_ADMISSION_DIGEST=%s\n' "${AMLAS_DATA_INSPECTION_ADMISSION_DIGEST:-}"
+  printf 'RESOLVED_DATA_PREPARATION_IMAGE_URI=%s\n' "${AMLAS_DATA_PREPARATION_IMAGE_URI:-}"
+  printf 'RESOLVED_DATA_PREPARATION_SOURCE_COMMIT=%s\n' "${AMLAS_DATA_PREPARATION_SOURCE_COMMIT:-}"
+  printf 'RESOLVED_DATA_PREPARATION_ADMISSION_DIGEST=%s\n' "${AMLAS_DATA_PREPARATION_ADMISSION_DIGEST:-}"
+  printf 'RESOLVED_DATA_PREPARATION_EXCLUSIONS_URI=%s\n' "${AMLAS_DATA_PREPARATION_EXCLUSIONS_URI:-}"
+  printf 'RESOLVED_DATA_PREPARATION_EXCLUSIONS_VERSION_ID=%s\n' "${AMLAS_DATA_PREPARATION_EXCLUSIONS_VERSION_ID:-}"
+  printf 'RESOLVED_DATA_PREPARATION_EXCLUSIONS_SHA256=%s\n' "${AMLAS_DATA_PREPARATION_EXCLUSIONS_SHA256:-}"
+  printf 'RESOLVED_DATA_PREPARATION_EXCLUSIONS_BYTE_COUNT=%s\n' "${AMLAS_DATA_PREPARATION_EXCLUSIONS_BYTE_COUNT:-}"
 else
   exit $?
 fi

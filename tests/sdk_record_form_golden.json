@@ -1,0 +1,75 @@
+{
+ "task": {
+  "causal_parent_ref": {
+   "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+   "uri": "s3://declared/parent",
+   "version_id": "1"
+  },
+  "logical_run_id": "11111111111111111111111111111111",
+  "native_job_arn": "arn:aws:sagemaker:us-west-2:111122223333:training-job/declared-sft-0123456789ab",
+  "native_job_name": "declared-sft-0123456789ab",
+  "operation_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "pending_tool_use_id": "ordinary-use",
+  "private_store_correlation": "12345678-1234-4234-9234-00000000dd41",
+  "schema_version": 2,
+  "sdk_snapshot": {
+   "app_data": {},
+   "created_at": "2026-11-16T00:36:21.552637Z",
+   "data": {
+    "conversation_manager_state": {
+     "__name__": "SlidingWindowConversationManager",
+     "model_call_count": 0,
+     "removed_message_count": 0
+    },
+    "interrupt_state": {
+     "activated": false,
+     "context": {},
+     "interrupts": {}
+    },
+    "messages": [
+     {
+      "content": [
+       {
+        "text": "Declared scripted goal."
+       }
+      ],
+      "role": "user"
+     },
+     {
+      "content": [
+       {
+        "toolUse": {
+         "input": {
+          "model_request_ref": "model_acq_11111111111111111111111111111111",
+          "preparation_request_ref": "prep_22222222222222222222222222222222"
+         },
+         "name": "submit_qwen_sft",
+         "toolUseId": "ordinary-use"
+        }
+       }
+      ],
+      "metadata": {
+       "metrics": {
+        "latencyMs": 0
+       },
+       "usage": {
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "totalTokens": 0
+       }
+      },
+      "role": "assistant"
+     }
+    ],
+    "state": {}
+   },
+   "schema_version": "1.0",
+   "scope": "agent"
+  },
+  "source_refs": [
+   "model_acq_11111111111111111111111111111111",
+   "prep_22222222222222222222222222222222"
+  ]
+ },
+ "written_by": "strands-agents 1.42.0"
+}

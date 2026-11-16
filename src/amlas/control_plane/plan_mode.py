@@ -22,7 +22,28 @@ from typing import Any
 
 from .approvals import ApprovalPolicy, request_approval
 
-__all__ = ["plan_approve_execute", "preview_flow_plan"]
+__all__ = ["plan_approve_execute", "preview_dataset_acquisition_plan", "preview_flow_plan"]
+
+
+def preview_dataset_acquisition_plan(params: dict[str, Any]) -> dict[str, Any]:
+    """Preview the collection acquisition path without a fabricated cost quote."""
+    return {
+        "flow_id": "data_collection_flow",
+        "operation": "dataset_acquisition",
+        "steps": [
+            {"step": "submit_pinned_acquisition", "port": "DataAcquisitionBackend", "tool": "submit"},
+            {"step": "observe_native_job", "port": "DataAcquisitionBackend", "tool": "status"},
+            {"step": "verify_acquisition_artifacts", "port": "DataAcquisitionBackend", "tool": "artifacts"},
+        ],
+        "estimated_cost": None,
+        "cost_status": "unknown",
+        "cost_basis": "A selected Processing resource and current provider quote are required.",
+        "spend_incurring": True,
+        "irreversible": True,
+        "read_only": True,
+        "executed": False,
+        "params": dict(params),
+    }
 
 
 # ── flow templates (the read-only plan shapes) ──────────────────────────────
@@ -30,6 +51,14 @@ __all__ = ["plan_approve_execute", "preview_flow_plan"]
 # spend, and the spend/irreversibility flags. These describe the M1+ flows the wrapper
 # guards; the catalog (doc 06 §5.3) is the source of the step→port mapping.
 _FLOW_TEMPLATES: dict[str, dict[str, Any]] = {
+    "data_preparation_flow": {
+        "steps": [
+            {"step": "prepare_verified_acquisitions", "port": "CodingPreparationBackend", "tool": "submit"}
+        ],
+        "estimated_cost": None,
+        "spend_incurring": True,
+        "irreversible": False,
+    },
     "exploration_loop": {
         "steps": [
             {"step": "research", "port": "ModelBackend", "tool": "research_lead"},
@@ -84,7 +113,11 @@ _FLOW_TEMPLATES: dict[str, dict[str, Any]] = {
         "steps": [
             {"step": "run_readiness_gates", "port": "DeploymentBackend", "tool": "run_readiness_gate"},
             {"step": "build_risk_register", "port": "DeploymentBackend", "tool": "build_risk_register"},
-            {"step": "compile_readiness_review", "port": "DeploymentBackend", "tool": "compile_readiness_review"},
+            {
+                "step": "compile_readiness_review",
+                "port": "DeploymentBackend",
+                "tool": "compile_readiness_review",
+            },
         ],
         "estimated_cost": 0.0,
         "spend_incurring": False,
@@ -100,7 +133,11 @@ _FLOW_TEMPLATES: dict[str, dict[str, Any]] = {
             {"step": "analyze_drift", "port": "MonitoringBackend", "tool": "analyze_drift"},
             {"step": "configure_alert", "port": "MonitoringBackend", "tool": "configure_alert"},
             {"step": "compile_report", "port": "MonitoringBackend", "tool": "compile_monitoring_report"},
-            {"step": "evaluate_retrain_trigger", "port": "OrchestrationBackend", "tool": "evaluate_retrain_trigger"},
+            {
+                "step": "evaluate_retrain_trigger",
+                "port": "OrchestrationBackend",
+                "tool": "evaluate_retrain_trigger",
+            },
         ],
         "estimated_cost": 0.0,
         "spend_incurring": False,
@@ -197,7 +234,7 @@ def preview_flow_plan(
     # Additive, presentation-only caveated band (never feeds the gate — see the docstring).
     from .cost_confidence import band_for
 
-    cost_band = band_for(estimated_cost, source="estimate").to_dict()
+    cost_band = None if estimated_cost is None else band_for(estimated_cost, source="estimate").to_dict()
     return {
         "flow_id": flow_id,
         "steps": steps,
@@ -245,7 +282,7 @@ def plan_approve_execute(
 
     decision = request_approval(
         action=flow_id,
-        cost_estimate=float(plan["estimated_cost"]),
+        cost_estimate=None if plan["estimated_cost"] is None else float(plan["estimated_cost"]),
         impact="irreversible" if plan["irreversible"] else "spend",
         policy=policy,
     )
@@ -266,7 +303,11 @@ def plan_approve_execute(
         "flow_id": flow_id,
         "plan": plan,
         "approved": True,
-        "executed": True,
+        "executed": (
+            result.get("accepted") is True
+            if flow_id == "data_preparation_flow" and isinstance(result, dict)
+            else True
+        ),
         "decision": decision,
         "result": result,
     }

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Grade predictive results deterministically and produce acceptance reports without delegating the decision to an LLM.
+Grade predictive results and fixed private coding reports deterministically without delegating acceptance to an LLM.
 
 ## Ownership
 
@@ -17,7 +17,11 @@ Inherits [../AGENTS.md](../AGENTS.md); this document owns the files directly in 
 - `registry.py:get_grader` — Return the registered grader for a task_type; raises KeyError if missing.
 - `schema.py:InvalidSubmissionError` — Raised by a grader when the agent's submission is malformed.
 - `schema.py:Grader` — Binding of task_type → scoring function.
-- Owned files: `__init__.py`, `arbiter.py`, `registry.py`, `schema.py`.
+- `coding.py` owns closed descriptive HumanEval164 execution bindings/receipts and exact paired2x164 aggregation. Its owning factory emits a private report only; all native/containment/grading-integrity/quality flags remain source-owned false in this pure slice. It performs no execution or origin authentication. Reports retain immutable canonical binding/summary bytes and declared consistency provenance; exact canonical spec SHA prevents cross-spec reuse. Coding-only phase logs are bounded/deep-copied and reserve the coding_evaluation key.
+- `arbiter.py` branches fixed text_generation/pass_at_1 before predictive label filtering and requires the original private report, matching case manifest and paired baseline. Resolved_rate/public metrics JSON cannot enter this profile; incomplete/infrastructure outcomes retain the164 denominator and cannot qualify acceptance.
+- Owned files: `__init__.py`, `arbiter.py`, `registry.py`, `schema.py`, `coding.py`.
+
+- `coding_spec_bytes` normalizes the validated SpecModel JSON projection before canonical encoding; `coding_spec_sha256` hashes those exact bytes. Generation spec retention uses the same projection, so default numeric values keep one fingerprint after serialized validation/restoration. This source fix does not rewrite historical native artifacts or their original source-bound fingerprints.
 
 ## Work Guidance
 

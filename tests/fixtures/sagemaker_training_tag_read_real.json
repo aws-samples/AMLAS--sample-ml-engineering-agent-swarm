@@ -1,0 +1,910 @@
+{
+ "held_report": {
+  "diagnostic": {
+   "error_class": "UNKNOWN",
+   "phase": "native_observation",
+   "reason": "original_unknown_budget_exhausted"
+  },
+  "disposition": "submission_unresolved",
+  "hold_kind": "input_admission_held",
+  "wait_log": {
+   "elapsed_s": 903,
+   "limit_s": 900,
+   "outcome": "closed",
+   "polls": 27
+  }
+ },
+ "list_job": {
+  "describes": [
+   {
+    "describe": {
+     "AlgorithmSpecification": {
+      "ContainerEntrypoint": [
+       "/bin/sh",
+       "-c",
+       "sleep 90"
+      ],
+      "EnableSageMakerMetricsTimeSeries": false,
+      "TrainingImage": "ACCOUNT.dkr.ecr.us-west-2.amazonaws.com/amlas-pilot-001-runtime@sha256:d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1",
+      "TrainingInputMode": "File"
+     },
+     "CreationTime": "2026-11-11 09:11:11.399000+00:00",
+     "EnableInterContainerTrafficEncryption": false,
+     "EnableManagedSpotTraining": false,
+     "EnableNetworkIsolation": true,
+     "InputDataConfig": [],
+     "LastModifiedTime": "2026-11-11 09:11:15.035000+00:00",
+     "OutputDataConfig": {
+      "CompressionType": "GZIP",
+      "KmsKeyId": "",
+      "S3OutputPath": "s3://amlas-demo-bucket-ACCOUNT-us-west-2/output/"
+     },
+     "ProfilingStatus": "Disabled",
+     "ResourceConfig": {
+      "InstanceCount": 1,
+      "InstancePreferences": [
+       {
+        "InstanceType": "ml.g6e.16xlarge"
+       },
+       {
+        "InstanceType": "ml.g6e.12xlarge"
+       },
+       {
+        "InstanceType": "ml.g6e.8xlarge"
+       },
+       {
+        "InstanceType": "ml.g6e.4xlarge"
+       }
+      ],
+      "VolumeSizeInGB": 30
+     },
+     "RoleArn": "arn:aws:iam::ACCOUNT:role/amlas-demo-sample-sagemaker",
+     "SecondaryStatus": "Pending",
+     "SecondaryStatusTransitions": [
+      {
+       "EndTime": "2026-11-11 09:11:15.035000+00:00",
+       "StartTime": "2026-11-11 09:11:11.399000+00:00",
+       "Status": "Starting",
+       "StatusMessage": "Starting the training job"
+      },
+      {
+       "StartTime": "2026-11-11 09:11:15.035000+00:00",
+       "Status": "Pending",
+       "StatusMessage": "Training job waiting for capacity"
+      }
+     ],
+     "StoppingCondition": {
+      "MaxRuntimeInSeconds": 300
+     },
+     "TrainingJobArn": "arn:aws:sagemaker:us-west-2:ACCOUNT:training-job/amlas-demo-sample-multi-20260101t010101z",
+     "TrainingJobName": "amlas-demo-sample-multi-20260101t010101z",
+     "TrainingJobStatus": "InProgress"
+    },
+    "read_utc": "2026-11-11T09:11:20Z"
+   },
+   {
+    "describe": {
+     "AlgorithmSpecification": {
+      "ContainerEntrypoint": [
+       "/bin/sh",
+       "-c",
+       "sleep 90"
+      ],
+      "EnableSageMakerMetricsTimeSeries": false,
+      "TrainingImage": "ACCOUNT.dkr.ecr.us-west-2.amazonaws.com/amlas-pilot-001-runtime@sha256:d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1",
+      "TrainingInputMode": "File"
+     },
+     "CreationTime": "2026-11-11 09:11:11.399000+00:00",
+     "EnableInterContainerTrafficEncryption": false,
+     "EnableManagedSpotTraining": false,
+     "EnableNetworkIsolation": true,
+     "InputDataConfig": [],
+     "LastModifiedTime": "2026-11-11 09:12:18.107000+00:00",
+     "OutputDataConfig": {
+      "CompressionType": "GZIP",
+      "KmsKeyId": "",
+      "S3OutputPath": "s3://amlas-demo-bucket-ACCOUNT-us-west-2/output/"
+     },
+     "ProfilingStatus": "Disabled",
+     "ResourceConfig": {
+      "InstanceCount": 1,
+      "InstancePreferences": [
+       {
+        "InstanceType": "ml.g6e.16xlarge"
+       },
+       {
+        "InstanceType": "ml.g6e.12xlarge"
+       },
+       {
+        "InstanceType": "ml.g6e.8xlarge"
+       },
+       {
+        "InstanceType": "ml.g6e.4xlarge"
+       }
+      ],
+      "SelectedInstanceCount": 1,
+      "SelectedInstanceType": "ml.g6e.12xlarge",
+      "VolumeSizeInGB": 30
+     },
+     "RoleArn": "arn:aws:iam::ACCOUNT:role/amlas-demo-sample-sagemaker",
+     "SecondaryStatus": "Downloading",
+     "SecondaryStatusTransitions": [
+      {
+       "EndTime": "2026-11-11 09:11:15.035000+00:00",
+       "StartTime": "2026-11-11 09:11:11.399000+00:00",
+       "Status": "Starting",
+       "StatusMessage": "Starting the training job"
+      },
+      {
+       "EndTime": "2026-11-11 09:12:17.534000+00:00",
+       "StartTime": "2026-11-11 09:11:15.035000+00:00",
+       "Status": "Pending",
+       "StatusMessage": "Preparing the instances for training"
+      },
+      {
+       "StartTime": "2026-11-11 09:12:17.534000+00:00",
+       "Status": "Downloading",
+       "StatusMessage": "Downloading input data"
+      }
+     ],
+     "StoppingCondition": {
+      "MaxRuntimeInSeconds": 300
+     },
+     "TrainingJobArn": "arn:aws:sagemaker:us-west-2:ACCOUNT:training-job/amlas-demo-sample-multi-20260101t010101z",
+     "TrainingJobName": "amlas-demo-sample-multi-20260101t010101z",
+     "TrainingJobStatus": "InProgress",
+     "TrainingStartTime": "2026-11-11 09:12:17.534000+00:00",
+     "TrainingTimeInSeconds": 3
+    },
+    "read_utc": "2026-11-11T09:12:20Z"
+   },
+   {
+    "describe": {
+     "AlgorithmSpecification": {
+      "ContainerEntrypoint": [
+       "/bin/sh",
+       "-c",
+       "sleep 90"
+      ],
+      "EnableSageMakerMetricsTimeSeries": false,
+      "TrainingImage": "ACCOUNT.dkr.ecr.us-west-2.amazonaws.com/amlas-pilot-001-runtime@sha256:d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1",
+      "TrainingInputMode": "File"
+     },
+     "CreationTime": "2026-11-11 09:11:11.399000+00:00",
+     "EnableInterContainerTrafficEncryption": false,
+     "EnableManagedSpotTraining": false,
+     "EnableNetworkIsolation": true,
+     "InputDataConfig": [],
+     "LastModifiedTime": "2026-11-11 09:12:28.080000+00:00",
+     "OutputDataConfig": {
+      "CompressionType": "GZIP",
+      "KmsKeyId": "",
+      "S3OutputPath": "s3://amlas-demo-bucket-ACCOUNT-us-west-2/output/"
+     },
+     "ProfilingStatus": "Disabled",
+     "ResourceConfig": {
+      "InstanceCount": 1,
+      "InstancePreferences": [
+       {
+        "InstanceType": "ml.g6e.16xlarge"
+       },
+       {
+        "InstanceType": "ml.g6e.12xlarge"
+       },
+       {
+        "InstanceType": "ml.g6e.8xlarge"
+       },
+       {
+        "InstanceType": "ml.g6e.4xlarge"
+       }
+      ],
+      "SelectedInstanceCount": 1,
+      "SelectedInstanceType": "ml.g6e.12xlarge",
+      "VolumeSizeInGB": 30
+     },
+     "RoleArn": "arn:aws:iam::ACCOUNT:role/amlas-demo-sample-sagemaker",
+     "SecondaryStatus": "Training",
+     "SecondaryStatusTransitions": [
+      {
+       "EndTime": "2026-11-11 09:11:15.035000+00:00",
+       "StartTime": "2026-11-11 09:11:11.399000+00:00",
+       "Status": "Starting",
+       "StatusMessage": "Starting the training job"
+      },
+      {
+       "EndTime": "2026-11-11 09:12:17.534000+00:00",
+       "StartTime": "2026-11-11 09:11:15.035000+00:00",
+       "Status": "Pending",
+       "StatusMessage": "Preparing the instances for training"
+      },
+      {
+       "EndTime": "2026-11-11 09:12:28.050000+00:00",
+       "StartTime": "2026-11-11 09:12:17.534000+00:00",
+       "Status": "Downloading",
+       "StatusMessage": "Downloading the training image"
+      },
+      {
+       "StartTime": "2026-11-11 09:12:28.050000+00:00",
+       "Status": "Training",
+       "StatusMessage": "Training image download completed. Training in progress."
+      }
+     ],
+     "StoppingCondition": {
+      "MaxRuntimeInSeconds": 300
+     },
+     "TrainingJobArn": "arn:aws:sagemaker:us-west-2:ACCOUNT:training-job/amlas-demo-sample-multi-20260101t010101z",
+     "TrainingJobName": "amlas-demo-sample-multi-20260101t010101z",
+     "TrainingJobStatus": "InProgress",
+     "TrainingStartTime": "2026-11-11 09:12:17.534000+00:00",
+     "TrainingTimeInSeconds": 13
+    },
+    "read_utc": "2026-11-11T09:12:30Z"
+   },
+   {
+    "describe": {
+     "AlgorithmSpecification": {
+      "ContainerEntrypoint": [
+       "/bin/sh",
+       "-c",
+       "sleep 90"
+      ],
+      "EnableSageMakerMetricsTimeSeries": false,
+      "TrainingImage": "ACCOUNT.dkr.ecr.us-west-2.amazonaws.com/amlas-pilot-001-runtime@sha256:d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1",
+      "TrainingInputMode": "File"
+     },
+     "CreationTime": "2026-11-11 09:11:11.399000+00:00",
+     "EnableInterContainerTrafficEncryption": false,
+     "EnableManagedSpotTraining": false,
+     "EnableNetworkIsolation": true,
+     "InputDataConfig": [],
+     "LastModifiedTime": "2026-11-11 09:12:33.339000+00:00",
+     "OutputDataConfig": {
+      "CompressionType": "GZIP",
+      "KmsKeyId": "",
+      "S3OutputPath": "s3://amlas-demo-bucket-ACCOUNT-us-west-2/output/"
+     },
+     "ProfilingStatus": "Disabled",
+     "ResourceConfig": {
+      "InstanceCount": 1,
+      "InstancePreferences": [
+       {
+        "InstanceType": "ml.g6e.16xlarge"
+       },
+       {
+        "InstanceType": "ml.g6e.12xlarge"
+       },
+       {
+        "InstanceType": "ml.g6e.8xlarge"
+       },
+       {
+        "InstanceType": "ml.g6e.4xlarge"
+       }
+      ],
+      "SelectedInstanceCount": 1,
+      "SelectedInstanceType": "ml.g6e.12xlarge",
+      "VolumeSizeInGB": 30
+     },
+     "RoleArn": "arn:aws:iam::ACCOUNT:role/amlas-demo-sample-sagemaker",
+     "SecondaryStatus": "Stopping",
+     "SecondaryStatusTransitions": [
+      {
+       "EndTime": "2026-11-11 09:11:15.035000+00:00",
+       "StartTime": "2026-11-11 09:11:11.399000+00:00",
+       "Status": "Starting",
+       "StatusMessage": "Starting the training job"
+      },
+      {
+       "EndTime": "2026-11-11 09:12:17.534000+00:00",
+       "StartTime": "2026-11-11 09:11:15.035000+00:00",
+       "Status": "Pending",
+       "StatusMessage": "Preparing the instances for training"
+      },
+      {
+       "EndTime": "2026-11-11 09:12:28.050000+00:00",
+       "StartTime": "2026-11-11 09:12:17.534000+00:00",
+       "Status": "Downloading",
+       "StatusMessage": "Downloading the training image"
+      },
+      {
+       "EndTime": "2026-11-11 09:12:33.339000+00:00",
+       "StartTime": "2026-11-11 09:12:28.050000+00:00",
+       "Status": "Training",
+       "StatusMessage": "Training image download completed. Training in progress."
+      },
+      {
+       "StartTime": "2026-11-11 09:12:33.339000+00:00",
+       "Status": "Stopping",
+       "StatusMessage": "Stopping the training job"
+      }
+     ],
+     "StoppingCondition": {
+      "MaxRuntimeInSeconds": 300
+     },
+     "TrainingJobArn": "arn:aws:sagemaker:us-west-2:ACCOUNT:training-job/amlas-demo-sample-multi-20260101t010101z",
+     "TrainingJobName": "amlas-demo-sample-multi-20260101t010101z",
+     "TrainingJobStatus": "Stopping",
+     "TrainingStartTime": "2026-11-11 09:12:17.534000+00:00",
+     "TrainingTimeInSeconds": 23
+    },
+    "read_utc": "2026-11-11T09:12:40Z"
+   },
+   {
+    "describe": {
+     "AlgorithmSpecification": {
+      "ContainerEntrypoint": [
+       "/bin/sh",
+       "-c",
+       "sleep 90"
+      ],
+      "EnableSageMakerMetricsTimeSeries": false,
+      "TrainingImage": "ACCOUNT.dkr.ecr.us-west-2.amazonaws.com/amlas-pilot-001-runtime@sha256:d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1",
+      "TrainingInputMode": "File"
+     },
+     "CreationTime": "2026-11-11 09:11:11.399000+00:00",
+     "EnableInterContainerTrafficEncryption": false,
+     "EnableManagedSpotTraining": false,
+     "EnableNetworkIsolation": true,
+     "InputDataConfig": [],
+     "LastModifiedTime": "2026-11-11 09:12:53.729000+00:00",
+     "OutputDataConfig": {
+      "CompressionType": "GZIP",
+      "KmsKeyId": "",
+      "S3OutputPath": "s3://amlas-demo-bucket-ACCOUNT-us-west-2/output/"
+     },
+     "ProfilingStatus": "Disabled",
+     "ResourceConfig": {
+      "InstanceCount": 1,
+      "InstancePreferences": [
+       {
+        "InstanceType": "ml.g6e.16xlarge"
+       },
+       {
+        "InstanceType": "ml.g6e.12xlarge"
+       },
+       {
+        "InstanceType": "ml.g6e.8xlarge"
+       },
+       {
+        "InstanceType": "ml.g6e.4xlarge"
+       }
+      ],
+      "SelectedInstanceCount": 1,
+      "SelectedInstanceType": "ml.g6e.12xlarge",
+      "VolumeSizeInGB": 30
+     },
+     "RoleArn": "arn:aws:iam::ACCOUNT:role/amlas-demo-sample-sagemaker",
+     "SecondaryStatus": "Uploading",
+     "SecondaryStatusTransitions": [
+      {
+       "EndTime": "2026-11-11 09:11:15.035000+00:00",
+       "StartTime": "2026-11-11 09:11:11.399000+00:00",
+       "Status": "Starting",
+       "StatusMessage": "Starting the training job"
+      },
+      {
+       "EndTime": "2026-11-11 09:12:17.534000+00:00",
+       "StartTime": "2026-11-11 09:11:15.035000+00:00",
+       "Status": "Pending",
+       "StatusMessage": "Preparing the instances for training"
+      },
+      {
+       "EndTime": "2026-11-11 09:12:28.050000+00:00",
+       "StartTime": "2026-11-11 09:12:17.534000+00:00",
+       "Status": "Downloading",
+       "StatusMessage": "Downloading the training image"
+      },
+      {
+       "EndTime": "2026-11-11 09:12:33.339000+00:00",
+       "StartTime": "2026-11-11 09:12:28.050000+00:00",
+       "Status": "Training",
+       "StatusMessage": "Training image download completed. Training in progress."
+      },
+      {
+       "EndTime": "2026-11-11 09:12:53.729000+00:00",
+       "StartTime": "2026-11-11 09:12:33.339000+00:00",
+       "Status": "Stopping",
+       "StatusMessage": "Stopping the training job"
+      },
+      {
+       "StartTime": "2026-11-11 09:12:53.729000+00:00",
+       "Status": "Uploading",
+       "StatusMessage": "Uploading generated training model"
+      }
+     ],
+     "StoppingCondition": {
+      "MaxRuntimeInSeconds": 300
+     },
+     "TrainingJobArn": "arn:aws:sagemaker:us-west-2:ACCOUNT:training-job/amlas-demo-sample-multi-20260101t010101z",
+     "TrainingJobName": "amlas-demo-sample-multi-20260101t010101z",
+     "TrainingJobStatus": "Stopping",
+     "TrainingStartTime": "2026-11-11 09:12:17.534000+00:00",
+     "TrainingTimeInSeconds": 43
+    },
+    "read_utc": "2026-11-11T09:13:00Z"
+   },
+   {
+    "describe": {
+     "AlgorithmSpecification": {
+      "ContainerEntrypoint": [
+       "/bin/sh",
+       "-c",
+       "sleep 90"
+      ],
+      "EnableSageMakerMetricsTimeSeries": false,
+      "TrainingImage": "ACCOUNT.dkr.ecr.us-west-2.amazonaws.com/amlas-pilot-001-runtime@sha256:d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1",
+      "TrainingInputMode": "File"
+     },
+     "BillableTimeInSeconds": 44,
+     "CreationTime": "2026-11-11 09:11:11.399000+00:00",
+     "EnableInterContainerTrafficEncryption": false,
+     "EnableManagedSpotTraining": false,
+     "EnableNetworkIsolation": true,
+     "InputDataConfig": [],
+     "LastModifiedTime": "2026-11-11 09:13:01.802000+00:00",
+     "ModelArtifacts": {
+      "S3ModelArtifacts": "s3://amlas-demo-bucket-ACCOUNT-us-west-2/output/amlas-demo-sample-multi-20260101t010101z/output/model.tar.gz"
+     },
+     "OutputDataConfig": {
+      "CompressionType": "GZIP",
+      "KmsKeyId": "",
+      "S3OutputPath": "s3://amlas-demo-bucket-ACCOUNT-us-west-2/output/"
+     },
+     "ProfilingStatus": "Disabled",
+     "ResourceConfig": {
+      "InstanceCount": 1,
+      "InstancePreferences": [
+       {
+        "InstanceType": "ml.g6e.16xlarge"
+       },
+       {
+        "InstanceType": "ml.g6e.12xlarge"
+       },
+       {
+        "InstanceType": "ml.g6e.8xlarge"
+       },
+       {
+        "InstanceType": "ml.g6e.4xlarge"
+       }
+      ],
+      "SelectedInstanceCount": 1,
+      "SelectedInstanceType": "ml.g6e.12xlarge",
+      "VolumeSizeInGB": 30
+     },
+     "RoleArn": "arn:aws:iam::ACCOUNT:role/amlas-demo-sample-sagemaker",
+     "SecondaryStatus": "Stopped",
+     "SecondaryStatusTransitions": [
+      {
+       "EndTime": "2026-11-11 09:11:15.035000+00:00",
+       "StartTime": "2026-11-11 09:11:11.399000+00:00",
+       "Status": "Starting",
+       "StatusMessage": "Starting the training job"
+      },
+      {
+       "EndTime": "2026-11-11 09:12:17.534000+00:00",
+       "StartTime": "2026-11-11 09:11:15.035000+00:00",
+       "Status": "Pending",
+       "StatusMessage": "Preparing the instances for training"
+      },
+      {
+       "EndTime": "2026-11-11 09:12:28.050000+00:00",
+       "StartTime": "2026-11-11 09:12:17.534000+00:00",
+       "Status": "Downloading",
+       "StatusMessage": "Downloading the training image"
+      },
+      {
+       "EndTime": "2026-11-11 09:12:33.339000+00:00",
+       "StartTime": "2026-11-11 09:12:28.050000+00:00",
+       "Status": "Training",
+       "StatusMessage": "Training image download completed. Training in progress."
+      },
+      {
+       "EndTime": "2026-11-11 09:12:53.729000+00:00",
+       "StartTime": "2026-11-11 09:12:33.339000+00:00",
+       "Status": "Stopping",
+       "StatusMessage": "Stopping the training job"
+      },
+      {
+       "EndTime": "2026-11-11 09:13:01.216000+00:00",
+       "StartTime": "2026-11-11 09:12:53.729000+00:00",
+       "Status": "Uploading",
+       "StatusMessage": "Uploading generated training model"
+      },
+      {
+       "EndTime": "2026-11-11 09:13:01.216000+00:00",
+       "StartTime": "2026-11-11 09:13:01.216000+00:00",
+       "Status": "Stopped",
+       "StatusMessage": "Training job stopped"
+      }
+     ],
+     "StoppingCondition": {
+      "MaxRuntimeInSeconds": 300
+     },
+     "TrainingEndTime": "2026-11-11 09:13:01.216000+00:00",
+     "TrainingJobArn": "arn:aws:sagemaker:us-west-2:ACCOUNT:training-job/amlas-demo-sample-multi-20260101t010101z",
+     "TrainingJobName": "amlas-demo-sample-multi-20260101t010101z",
+     "TrainingJobStatus": "Stopped",
+     "TrainingStartTime": "2026-11-11 09:12:17.534000+00:00",
+     "TrainingTimeInSeconds": 44
+    },
+    "read_utc": "2026-11-11T09:13:10Z"
+   }
+  ],
+  "request": {
+   "AlgorithmSpecification": {
+    "ContainerEntrypoint": [
+     "/bin/sh",
+     "-c",
+     "sleep 90"
+    ],
+    "TrainingImage": "ACCOUNT.dkr.ecr.us-west-2.amazonaws.com/amlas-pilot-001-runtime@sha256:d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1",
+    "TrainingInputMode": "File"
+   },
+   "EnableNetworkIsolation": true,
+   "OutputDataConfig": {
+    "S3OutputPath": "s3://amlas-demo-bucket-ACCOUNT-us-west-2/output/"
+   },
+   "ResourceConfig": {
+    "InstanceCount": 1,
+    "InstancePreferences": [
+     {
+      "InstanceType": "ml.g6e.16xlarge"
+     },
+     {
+      "InstanceType": "ml.g6e.12xlarge"
+     },
+     {
+      "InstanceType": "ml.g6e.8xlarge"
+     },
+     {
+      "InstanceType": "ml.g6e.4xlarge"
+     }
+    ],
+    "VolumeSizeInGB": 30
+   },
+   "RoleArn": "arn:aws:iam::ACCOUNT:role/amlas-demo-sample-sagemaker",
+   "StoppingCondition": {
+    "MaxRuntimeInSeconds": 300
+   },
+   "Tags": [
+    {
+     "Key": "auto-delete",
+     "Value": "no"
+    },
+    {
+     "Key": "project",
+     "Value": "amlas-demo"
+    },
+    {
+     "Key": "purpose",
+     "Value": "capacity-canary"
+    }
+   ],
+   "TrainingJobName": "amlas-demo-sample-multi-20260101t010101z"
+  },
+  "tags": [
+   {
+    "Key": "auto-delete",
+    "Value": "no"
+   },
+   {
+    "Key": "purpose",
+    "Value": "capacity-canary"
+   },
+   {
+    "Key": "project",
+    "Value": "amlas-demo"
+   }
+  ]
+ },
+ "refused_tag_read": {
+  "cloudtrail_error_code": "AccessDenied",
+  "deployment_prefix": "amlas-demo",
+  "first_utc": "2026-11-11T07:39:35Z",
+  "last_utc": "2026-11-11T08:09:35Z",
+  "message": "User: arn:aws:sts::ACCOUNT:assumed-role/amlas-demo-runtime-exec-us-west-2/BedrockAgentCore-00000000-0000-4000-8000-0000000000a3 is not authorized to perform: sagemaker:ListTags on resource: arn:aws:sagemaker:us-west-2:ACCOUNT:training-job/amlas-demo-sft-b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1 because no identity-based policy allows the sagemaker:ListTags action",
+  "operation": "ListTags",
+  "region": "us-west-2"
+ },
+ "runtime_role_calls": [
+  {
+   "action": "sagemaker:CreateTrainingJob",
+   "count": 1,
+   "job_name": "amlas-demo-sft-b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+   "outcome": "ok",
+   "resource_type": "training-job"
+  },
+  {
+   "action": "sagemaker:DescribeTrainingJob",
+   "count": 71,
+   "job_name": "amlas-demo-sft-b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+   "outcome": "ok",
+   "resource_type": "training-job"
+  },
+  {
+   "action": "sagemaker:ListTags",
+   "count": 3,
+   "job_name": "amlas-demo-case-freeze-a1a1a1a1a1",
+   "outcome": "ok",
+   "resource_type": "processing-job"
+  },
+  {
+   "action": "sagemaker:ListTags",
+   "count": 71,
+   "job_name": "amlas-demo-sft-b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+   "outcome": "AccessDenied",
+   "resource_type": "training-job"
+  }
+ ],
+ "sft_job": {
+  "completed_describe": {
+   "AlgorithmSpecification": {
+    "ContainerArguments": [
+     "--operation",
+     "train",
+     "--recipe-id",
+     "fit_v1",
+     "--recipe-version",
+     "1",
+     "--source-commit",
+     "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+     "--manifest-sha256",
+     "afafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafaf",
+     "--manifest-byte-count",
+     "2868"
+    ],
+    "ContainerEntrypoint": [
+     "/usr/local/bin/amlas-processing-init",
+     "qwen-sft"
+    ],
+    "EnableSageMakerMetricsTimeSeries": false,
+    "TrainingImage": "ACCOUNT.dkr.ecr.us-west-2.amazonaws.com/amlas-pilot-001-runtime@sha256:e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2",
+    "TrainingInputMode": "File"
+   },
+   "BillableTimeInSeconds": 1042,
+   "CreationTime": "2026-11-11 07:39:09.534000+00:00",
+   "EnableInterContainerTrafficEncryption": false,
+   "EnableManagedSpotTraining": false,
+   "EnableNetworkIsolation": true,
+   "InputDataConfig": [
+    {
+     "ChannelName": "base_model",
+     "CompressionType": "None",
+     "DataSource": {
+      "S3DataSource": {
+       "S3DataDistributionType": "FullyReplicated",
+       "S3DataType": "S3Prefix",
+       "S3Uri": "s3://amlas-demo-asynctrainingstac-sessionbucketfixture-examplebucket/sessions/00000000-0000-4000-8000-0000000000a1/sft/amlas-demo-sft-b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1/input/base_model/"
+      }
+     },
+     "InputMode": "File",
+     "RecordWrapperType": "None"
+    },
+    {
+     "ChannelName": "prepared",
+     "CompressionType": "None",
+     "DataSource": {
+      "S3DataSource": {
+       "S3DataDistributionType": "FullyReplicated",
+       "S3DataType": "S3Prefix",
+       "S3Uri": "s3://amlas-demo-asynctrainingstac-sessionbucketfixture-examplebucket/sessions/00000000-0000-4000-8000-0000000000a1/sft/amlas-demo-sft-b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1/input/prepared/"
+      }
+     },
+     "InputMode": "File",
+     "RecordWrapperType": "None"
+    },
+    {
+     "ChannelName": "bindings",
+     "CompressionType": "None",
+     "DataSource": {
+      "S3DataSource": {
+       "S3DataDistributionType": "FullyReplicated",
+       "S3DataType": "S3Prefix",
+       "S3Uri": "s3://amlas-demo-asynctrainingstac-sessionbucketfixture-examplebucket/sessions/00000000-0000-4000-8000-0000000000a1/sft/amlas-demo-sft-b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1/input/bindings/"
+      }
+     },
+     "InputMode": "File",
+     "RecordWrapperType": "None"
+    }
+   ],
+   "LastModifiedTime": "2026-11-11 08:05:08.674000+00:00",
+   "ModelArtifacts": {
+    "S3ModelArtifacts": "s3://amlas-demo-asynctrainingstac-sessionbucketfixture-examplebucket/sessions/00000000-0000-4000-8000-0000000000a1/sft/amlas-demo-sft-b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1/output/amlas-demo-sft-b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1/output/model"
+   },
+   "OutputDataConfig": {
+    "CompressionType": "NONE",
+    "KmsKeyId": "",
+    "S3OutputPath": "s3://amlas-demo-asynctrainingstac-sessionbucketfixture-examplebucket/sessions/00000000-0000-4000-8000-0000000000a1/sft/amlas-demo-sft-b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1/output"
+   },
+   "ProfilingStatus": "Disabled",
+   "ResourceConfig": {
+    "InstanceCount": 1,
+    "InstancePreferences": [
+     {
+      "InstanceType": "ml.g6e.16xlarge"
+     },
+     {
+      "InstanceType": "ml.g6e.12xlarge"
+     },
+     {
+      "InstanceType": "ml.g6e.8xlarge"
+     },
+     {
+      "InstanceType": "ml.g6e.4xlarge"
+     }
+    ],
+    "SelectedInstanceCount": 1,
+    "SelectedInstanceType": "ml.g6e.12xlarge",
+    "VolumeSizeInGB": 100
+   },
+   "RoleArn": "arn:aws:iam::ACCOUNT:role/amlas-demo-sagemaker-exec",
+   "SecondaryStatus": "Completed",
+   "SecondaryStatusTransitions": [
+    {
+     "EndTime": "2026-11-11 07:39:09.903000+00:00",
+     "StartTime": "2026-11-11 07:39:09.534000+00:00",
+     "Status": "Starting",
+     "StatusMessage": "Starting the training job"
+    },
+    {
+     "EndTime": "2026-11-11 07:47:46.752000+00:00",
+     "StartTime": "2026-11-11 07:39:09.903000+00:00",
+     "Status": "Pending",
+     "StatusMessage": "Preparing the instances for training"
+    },
+    {
+     "EndTime": "2026-11-11 07:49:32.745000+00:00",
+     "StartTime": "2026-11-11 07:47:46.752000+00:00",
+     "Status": "Downloading",
+     "StatusMessage": "Downloading the training image"
+    },
+    {
+     "EndTime": "2026-11-11 08:05:01.011000+00:00",
+     "StartTime": "2026-11-11 07:49:32.745000+00:00",
+     "Status": "Training",
+     "StatusMessage": "Training image download completed. Training in progress."
+    },
+    {
+     "EndTime": "2026-11-11 08:05:08.344000+00:00",
+     "StartTime": "2026-11-11 08:05:01.011000+00:00",
+     "Status": "Uploading",
+     "StatusMessage": "Uploading generated training model"
+    },
+    {
+     "EndTime": "2026-11-11 08:05:08.344000+00:00",
+     "StartTime": "2026-11-11 08:05:08.344000+00:00",
+     "Status": "Completed",
+     "StatusMessage": "Training job completed"
+    }
+   ],
+   "StoppingCondition": {
+    "MaxRuntimeInSeconds": 3600
+   },
+   "TrainingEndTime": "2026-11-11 08:05:08.344000+00:00",
+   "TrainingJobArn": "arn:aws:sagemaker:us-west-2:ACCOUNT:training-job/amlas-demo-sft-b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+   "TrainingJobName": "amlas-demo-sft-b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+   "TrainingJobStatus": "Completed",
+   "TrainingStartTime": "2026-11-11 07:47:46.752000+00:00",
+   "TrainingTimeInSeconds": 1042
+  },
+  "stored_request": {
+   "AlgorithmSpecification": {
+    "ContainerArguments": [
+     "--operation",
+     "train",
+     "--recipe-id",
+     "fit_v1",
+     "--recipe-version",
+     "1",
+     "--source-commit",
+     "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+     "--manifest-sha256",
+     "afafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafaf",
+     "--manifest-byte-count",
+     "2868"
+    ],
+    "ContainerEntrypoint": [
+     "/usr/local/bin/amlas-processing-init",
+     "qwen-sft"
+    ],
+    "TrainingImage": "ACCOUNT.dkr.ecr.us-west-2.amazonaws.com/amlas-pilot-001-runtime@sha256:e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2",
+    "TrainingInputMode": "File"
+   },
+   "EnableInterContainerTrafficEncryption": false,
+   "EnableNetworkIsolation": true,
+   "InputDataConfig": [
+    {
+     "ChannelName": "base_model",
+     "CompressionType": "None",
+     "DataSource": {
+      "S3DataSource": {
+       "S3DataDistributionType": "FullyReplicated",
+       "S3DataType": "S3Prefix",
+       "S3Uri": "s3://amlas-demo-asynctrainingstac-sessionbucketfixture-examplebucket/sessions/00000000-0000-4000-8000-0000000000a1/sft/amlas-demo-sft-b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1/input/base_model/"
+      }
+     },
+     "InputMode": "File"
+    },
+    {
+     "ChannelName": "prepared",
+     "CompressionType": "None",
+     "DataSource": {
+      "S3DataSource": {
+       "S3DataDistributionType": "FullyReplicated",
+       "S3DataType": "S3Prefix",
+       "S3Uri": "s3://amlas-demo-asynctrainingstac-sessionbucketfixture-examplebucket/sessions/00000000-0000-4000-8000-0000000000a1/sft/amlas-demo-sft-b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1/input/prepared/"
+      }
+     },
+     "InputMode": "File"
+    },
+    {
+     "ChannelName": "bindings",
+     "CompressionType": "None",
+     "DataSource": {
+      "S3DataSource": {
+       "S3DataDistributionType": "FullyReplicated",
+       "S3DataType": "S3Prefix",
+       "S3Uri": "s3://amlas-demo-asynctrainingstac-sessionbucketfixture-examplebucket/sessions/00000000-0000-4000-8000-0000000000a1/sft/amlas-demo-sft-b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1/input/bindings/"
+      }
+     },
+     "InputMode": "File"
+    }
+   ],
+   "OutputDataConfig": {
+    "CompressionType": "NONE",
+    "S3OutputPath": "s3://amlas-demo-asynctrainingstac-sessionbucketfixture-examplebucket/sessions/00000000-0000-4000-8000-0000000000a1/sft/amlas-demo-sft-b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1/output"
+   },
+   "ResourceConfig": {
+    "InstanceCount": 1,
+    "InstancePreferences": [
+     {
+      "InstanceType": "ml.g6e.16xlarge"
+     },
+     {
+      "InstanceType": "ml.g6e.12xlarge"
+     },
+     {
+      "InstanceType": "ml.g6e.8xlarge"
+     },
+     {
+      "InstanceType": "ml.g6e.4xlarge"
+     }
+    ],
+    "VolumeSizeInGB": 100
+   },
+   "RoleArn": "arn:aws:iam::ACCOUNT:role/amlas-demo-sagemaker-exec",
+   "StoppingCondition": {
+    "MaxRuntimeInSeconds": 3600
+   },
+   "Tags": [
+    {
+     "Key": "amlas:deployment-id",
+     "Value": "00000000-0000-4000-8000-0000000000a2"
+    },
+    {
+     "Key": "amlas:deployment-prefix",
+     "Value": "amlas-demo"
+    },
+    {
+     "Key": "amlas:runtime-session-id",
+     "Value": "00000000-0000-4000-8000-0000000000a1"
+    }
+   ],
+   "TrainingJobName": "amlas-demo-sft-b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1"
+  },
+  "tags": [
+   {
+    "Key": "amlas:runtime-session-id",
+    "Value": "00000000-0000-4000-8000-0000000000a1"
+   },
+   {
+    "Key": "amlas:deployment-id",
+    "Value": "00000000-0000-4000-8000-0000000000a2"
+   },
+   {
+    "Key": "amlas:deployment-prefix",
+    "Value": "amlas-demo"
+   }
+  ]
+ },
+ "source": "Real records of the first real normal-path run of a deployed test stage (2026-11-11 UTC): the SageMaker calls of the runtime execution role from CloudTrail LookupEvents, the stored native request of the run's fine-tune job with its DescribeTrainingJob and ListTags answers after completion, and every distinct DescribeTrainingJob answer of one real preference-list job read every 10 s from Pending to Stopped (botocore 1.43.127). Real: the record shapes and field sets, the statuses and their transitions, the instance types, the tag keys, the call counts and the record datetimes (kept as text). Made up, each with the length of the real value: the stage name, every job name with its digest or timestamp part, the bucket, role and image names, the session, deployment and role-session ids, the image digests, the manifest digest and the source commit argument; the account id is the word ACCOUNT. It is shape data for the tag-read and readback tests, not a record of a run."
+}

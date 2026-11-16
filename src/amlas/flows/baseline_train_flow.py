@@ -36,7 +36,7 @@ __all__ = ["BaselineTrainFlowResult", "execute_baseline_train_flow", "run_baseli
 class BaselineTrainFlowResult:
     """The invariant output contract of one ``baseline_train_flow`` run."""
 
-    status: str  # "accepted" | "rejected" | "failed" | "denied"
+    status: str  # "waiting" | "unassessed" | "accepted" | "rejected" | "failed" | "denied"
     approved: bool = True
     job_id: str = ""
     train_backend: str = ""
@@ -70,32 +70,55 @@ def execute_baseline_train_flow(
     Arbiter decision (step 2) is the non-delegated deterministic grade (ADR-003). The
     candidate is registered (step 4) ONLY when the Arbiter accepts.
     """
-    # ── 1. train baseline via TrainingBackend (local sklearn offline) ───────────
+    # ── 1. train baseline through the selected TrainingBackend ────────────────
     try:
         tr = REGISTRY.resolve(TrainingBackend, steering=steering)
         handle = tr.adapter.submit(algo=algo, train_uri=train_uri, target=target,
                                    hyperparams=hyperparams, resources=resources)
-        status = tr.adapter.status(handle)
-        metrics = tr.adapter.metrics(handle) if status.state.value == "SUCCEEDED" else {}
     except Exception as e:
         return BaselineTrainFlowResult(status="failed", detail={"stage": "train", "error": str(e)})
+    identity = {"job_id": handle.id, "train_backend": handle.backend}
+    try:
+        status = tr.adapter.status(handle)
+    except Exception as e:
+        # A failed observation cannot undo an accepted native job or justify resubmission.
+        return BaselineTrainFlowResult(
+            status="waiting", **identity, detail={"stage": "status", "state": "UNKNOWN", "error": str(e)},
+        )
     if status.state.value != "SUCCEEDED":
-        return BaselineTrainFlowResult(status="failed", job_id=handle.id, train_backend=handle.backend,
-                                       detail={"stage": "train", "state": status.state.value, "info": status.detail})
+        return BaselineTrainFlowResult(
+            status="failed" if status.state.value in ("FAILED", "STOPPED") else "waiting",
+            **identity, detail={"stage": "train", "state": status.state.value, "info": status.detail},
+        )
+    try:
+        metrics = tr.adapter.metrics(handle)
+    except Exception as e:
+        return BaselineTrainFlowResult(
+            status="unassessed", **identity, detail={"stage": "metrics", "error": str(e)},
+        )
 
     # ── 2. grade via the deterministic Arbiter (NON-DELEGATED — ADR-003) ────────
-    arbiter_verdict, accepted = "", True
-    arbiter_report: dict[str, Any] = {}
-    if spec is not None and y_true is not None and y_pred is not None:
-        try:
-            ev = REGISTRY.resolve(EvaluationBackend)
-            report = ev.adapter.grade(spec=spec, y_true=y_true, y_pred=y_pred, baseline_score=baseline_score)
-            arbiter_report = report.model_dump() if hasattr(report, "model_dump") else dict(report)
-            arbiter_verdict = str(arbiter_report.get("verdict", arbiter_report.get("decision", "")))
-            accepted = _is_accept(arbiter_report)
-        except Exception as e:
-            return BaselineTrainFlowResult(status="failed", job_id=handle.id, train_backend=handle.backend,
-                                           metrics=metrics, detail={"stage": "grade", "error": str(e)})
+    if spec is None or y_true is None or y_pred is None:
+        return BaselineTrainFlowResult(
+            status="unassessed", **identity, metrics=metrics,
+            detail={"stage": "grade", "reason": "complete grading inputs are required"},
+        )
+    try:
+        ev = REGISTRY.resolve(EvaluationBackend)
+        report = ev.adapter.grade(spec=spec, y_true=y_true, y_pred=y_pred, baseline_score=baseline_score)
+        arbiter_report = report.model_dump() if hasattr(report, "model_dump") else dict(report)
+        arbiter_verdict = str(arbiter_report.get("verdict", arbiter_report.get("decision", "")))
+        accepted = _acceptance_decision(arbiter_report)
+    except Exception as e:
+        return BaselineTrainFlowResult(
+            status="unassessed", **identity, metrics=metrics, detail={"stage": "grade", "error": str(e)},
+        )
+    if accepted is None:
+        return BaselineTrainFlowResult(
+            status="unassessed", **identity, metrics=metrics, arbiter_verdict=arbiter_verdict,
+            arbiter_report=arbiter_report,
+            detail={"stage": "grade", "reason": "an explicit consistent grading decision is required"},
+        )
 
     # ── 3. log the run to ExperimentTracking ────────────────────────────────────
     run_id = ""
@@ -183,12 +206,31 @@ def run_baseline_train_flow(
     return result
 
 
-def _is_accept(report: dict[str, Any]) -> bool:
-    """Interpret an Arbiter report dict as accept/reject (defensive across shapes)."""
+def _acceptance_decision(report: dict[str, Any]) -> bool | None:
+    """Require explicit, well-typed and consistent canonical or legacy decisions."""
+    decisions: list[bool] = []
     for key in ("passes_acceptance", "accepted", "passed", "is_accept"):
         if key in report:
-            return bool(report[key])
-    verdict = str(report.get("verdict", report.get("decision", ""))).strip().lower()
-    if verdict:
-        return verdict in ("accept", "accepted", "pass", "passed", "approve", "approved")
-    return True  # no verdict present → treat as non-blocking (the grade was informational)
+            value = report[key]
+            if type(value) is not bool:
+                return None
+            decisions.append(value)
+    positive = {"accept", "accepted", "pass", "passed", "approve", "approved"}
+    negative = {"reject", "rejected", "fail", "failed", "deny", "denied", "disapprove", "disapproved"}
+    for key in ("verdict", "decision"):
+        if key in report:
+            value = report[key]
+            if not isinstance(value, str):
+                return None
+            value = value.strip().lower()
+            if value not in positive and value not in negative:
+                return None
+            decisions.append(value in positive)
+    if not decisions or any(value != decisions[0] for value in decisions):
+        return None
+    return decisions[0]
+
+
+def _is_accept(report: dict[str, Any]) -> bool:
+    """Return true only for an explicit valid positive deterministic decision."""
+    return _acceptance_decision(report) is True

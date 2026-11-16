@@ -1,4 +1,4 @@
-"""The 25 backend **ports** — domain-typed ``Protocol`` interfaces (doc 05 §4.2).
+"""The 29 backend **ports** — domain-typed ``Protocol`` interfaces (doc 05 §4.2).
 
 This is the central new construct (the fix for RECON §10.1 "no backend-abstraction
 layer"). Every ``@tool`` and opinionated flow depends on a **port**, never boto3
@@ -6,9 +6,9 @@ directly (doc 05 §4.4 before/after). A port speaks the *domain* (algo, data,
 budget, plan, handle, ref from ``types.py``); the boto3 specifics live in each
 adapter under ``backends/<port>/``. ADR-001 / ADR-012.
 
-The five port groups (doc 05 §4.1), totalling **25** formal ports:
-  * Group 1 — ML-compute (4): Training, Tuning, AutoML, ModelHub.
-  * Group 2 — data/feature (7): ETL, DataQuality, FeatureStore, Lake, Query, Labeling, Retrieval.
+The five port groups (doc 05 §4.1), totalling **29** formal ports:
+  * Group 1 — ML-compute (5): Training, Tuning, AutoML, ModelHub, ModelWeightAcquisition.
+  * Group 2 — data/feature (10): Acquisition, Inspection, Preparation, ETL, DataQuality, FeatureStore, Lake, Query, Labeling, Retrieval.
   * Group 3 — deploy/serve/eval (3): Deployment, Explainability, Evaluation.
   * Group 4 — MLOps/gov/orchestration (6 + Guardrail): ModelRegistry, Monitoring,
     ExperimentTracking, Pipeline, Orchestration, Governance (+ GuardrailBackend,
@@ -28,11 +28,16 @@ the domain ``types``.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+if TYPE_CHECKING:
+    from ..control_plane.preparation_state import PreparationCatalog, VerifiedPreparationSource
+
+from .coding_case_port import CodingCaseFreezeBackend
 from .types import (
     CatalogView,
     Chunk,
+    DatasetInspectionSource,
     DatasetRef,
     DQScore,
     DriftReport,
@@ -56,6 +61,10 @@ __all__ = [
     # introspection helpers
     "ALL_PORTS",
     "AutoMLBackend",
+    "CodingCaseFreezeBackend",
+    "CodingPreparationBackend",
+    "DataAcquisitionBackend",
+    "DataInspectionBackend",
     "DataQualityBackend",
     # Group 3 — deploy / serve / eval
     "DeploymentBackend",
@@ -75,10 +84,12 @@ __all__ = [
     "ModelHubBackend",
     # Group 4 — MLOps / gov / orchestration (+ Guardrail)
     "ModelRegistryBackend",
+    "ModelWeightAcquisitionBackend",
     "MonitoringBackend",
     "OrchestrationBackend",
     "PipelineBackend",
     "QueryBackend",
+    "QwenSftBackend",
     "RetrievalBackend",
     "RuntimeBackend",
     "SandboxBackend",
@@ -175,8 +186,57 @@ class ModelHubBackend(Protocol):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Group 2 — data / feature ports (6)
+# Group 2 — data / feature ports (8)
 # ══════════════════════════════════════════════════════════════════════════════
+@runtime_checkable
+class DataAcquisitionBackend(Protocol):
+    """Acquire one pinned source artifact, preserving an honest async lifecycle."""
+
+    def submit(
+        self,
+        *,
+        repo_id: str,
+        revision: str,
+        filename: str,
+        resources: dict[str, Any] | None = None,
+    ) -> JobHandle: ...
+
+    def status(self, handle: JobHandle) -> JobStatus: ...
+
+    def artifacts(self, handle: JobHandle) -> dict[str, Any]: ...
+
+
+@runtime_checkable
+class DataInspectionBackend(Protocol):
+    """Fixed isolated inspection of trusted acquired bytes, without local fallback."""
+
+    backend_name: str
+
+    def submit(
+        self,
+        *,
+        source: DatasetInspectionSource,
+        target_column: str | None = None,
+    ) -> JobHandle: ...
+
+    def status(self, handle: JobHandle) -> JobStatus: ...
+
+    def report(self, handle: JobHandle) -> dict[str, Any]: ...
+
+
+@runtime_checkable
+class ModelWeightAcquisitionBackend(Protocol):
+    """Fixed source-catalog model bytes; handles remain private session state."""
+
+    backend_name: str
+
+    def submit(self, *, catalog_id: str, catalog_version: str, runtime_session_id: str) -> JobHandle: ...
+
+    def status(self, handle: JobHandle) -> JobStatus: ...
+
+    def artifacts(self, handle: JobHandle) -> dict[str, Any]: ...
+
+
 @runtime_checkable
 class ETLBackend(Protocol):
     """Transforms + crawls (default Glue; local in-process pandas). doc 05 §4.2 G2.
@@ -185,7 +245,12 @@ class ETLBackend(Protocol):
     """
 
     def run_transform(
-        self, *, input_uri: str, transform_spec: dict[str, Any], output: str, resources: dict[str, Any] | None = None
+        self,
+        *,
+        input_uri: str,
+        transform_spec: dict[str, Any],
+        output: str,
+        resources: dict[str, Any] | None = None,
     ) -> dict[str, Any]: ...
 
     def run_crawl(self, *, s3_target: str) -> dict[str, Any]: ...
@@ -230,11 +295,24 @@ class LakeBackend(Protocol):
     doc 05 §4.2 G2 / §6.
     """
 
-    def read_slice(self, *, name_or_uri: str, columns: list[str] | None = None,
-                   filters: dict[str, Any] | None = None, max_rows: int | None = None) -> DatasetRef: ...
+    def read_slice(
+        self,
+        *,
+        name_or_uri: str,
+        columns: list[str] | None = None,
+        filters: dict[str, Any] | None = None,
+        max_rows: int | None = None,
+    ) -> DatasetRef: ...
 
-    def write_dataset(self, *, local_path: str, dest_uri: str, tier: str = "silver",
-                      lineage: dict[str, Any] | None = None, profile: dict[str, Any] | None = None) -> str: ...
+    def write_dataset(
+        self,
+        *,
+        local_path: str,
+        dest_uri: str,
+        tier: str = "silver",
+        lineage: dict[str, Any] | None = None,
+        profile: dict[str, Any] | None = None,
+    ) -> str: ...
 
     def list_catalog(self, *, database: str | None = None) -> CatalogView: ...
 
@@ -257,8 +335,14 @@ class LabelingBackend(Protocol):
     """
 
     def create_job(
-        self, *, input_manifest: str, task_type: str, categories: list[str],
-        workteam: str, ui_template: str | None = None, auto_label: bool = True
+        self,
+        *,
+        input_manifest: str,
+        task_type: str,
+        categories: list[str],
+        workteam: str,
+        ui_template: str | None = None,
+        auto_label: bool = True,
     ) -> JobHandle: ...
 
     def progress(self, handle: JobHandle) -> dict[str, Any]: ...
@@ -277,8 +361,15 @@ class RetrievalBackend(Protocol):
     RAG tools T-RAG-01..06 call this port. doc 05 §4.2 G2 (folds in as the 20th port).
     """
 
-    def chunk(self, *, text: str, chunk_size: int = 512, overlap: int = 64,
-              source: str = "", metadata: dict[str, Any] | None = None) -> list[Chunk]:
+    def chunk(
+        self,
+        *,
+        text: str,
+        chunk_size: int = 512,
+        overlap: int = 64,
+        source: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> list[Chunk]:
         """T-RAG-02 — split ``text`` into overlapping :class:`Chunk`s with provenance."""
         ...
 
@@ -286,13 +377,15 @@ class RetrievalBackend(Protocol):
         """T-RAG-05 — build/replace a retrieval index ``name`` from ``chunks``."""
         ...
 
-    def index_corpus(self, *, name: str, documents: list[dict[str, Any]],
-                     chunk_size: int = 512, overlap: int = 64) -> IndexRef:
+    def index_corpus(
+        self, *, name: str, documents: list[dict[str, Any]], chunk_size: int = 512, overlap: int = 64
+    ) -> IndexRef:
         """T-RAG-01 — chunk + index a corpus of ``{text, source, metadata}`` docs."""
         ...
 
-    def query(self, *, name: str, query: str, top_k: int = 5,
-              filters: dict[str, Any] | None = None) -> list[RetrievalResult]:
+    def query(
+        self, *, name: str, query: str, top_k: int = 5, filters: dict[str, Any] | None = None
+    ) -> list[RetrievalResult]:
         """T-RAG-06 — retrieve the ``top_k`` most relevant chunks for ``query``."""
         ...
 
@@ -310,27 +403,49 @@ class DeploymentBackend(Protocol):
     are the irreversible ops the M1 approval gate wraps (doc 05 §8.8). doc 05 §4.2 G3.
     """
 
-    def package(self, *, model_ref: ModelRef, image: str | None = None,
-                inference_code: str | None = None, env: dict[str, Any] | None = None) -> PackageRef:
+    def package(
+        self,
+        *,
+        model_ref: ModelRef,
+        image: str | None = None,
+        inference_code: str | None = None,
+        env: dict[str, Any] | None = None,
+    ) -> PackageRef:
         """T-DEPLOY-09 — package a trained artifact into a deployable container ref."""
         ...
 
-    def deploy(self, *, model_ref: ModelRef, mode: str = "realtime",
-               resources: dict[str, Any] | None = None, autoscaling: dict[str, Any] | None = None) -> EndpointRef:
+    def deploy(
+        self,
+        *,
+        model_ref: ModelRef,
+        mode: str = "realtime",
+        resources: dict[str, Any] | None = None,
+        autoscaling: dict[str, Any] | None = None,
+    ) -> EndpointRef:
         """T-DEPLOY-01 — deploy as realtime/serverless/async/multimodel; returns the endpoint."""
         ...
 
-    def invoke(self, *, endpoint: EndpointRef, payload: Any, target_model: str | None = None) -> dict[str, Any]:
+    def invoke(
+        self, *, endpoint: EndpointRef, payload: Any, target_model: str | None = None
+    ) -> dict[str, Any]:
         """T-DEPLOY-02 — invoke the endpoint with ``payload``; returns ``{"prediction": ...}``."""
         ...
 
-    def update_canary(self, *, endpoint: EndpointRef, new_config: dict[str, Any],
-                      canary_pct: int, alarms: list[str] | None = None, mode: str = "canary") -> dict[str, Any]:
+    def update_canary(
+        self,
+        *,
+        endpoint: EndpointRef,
+        new_config: dict[str, Any],
+        canary_pct: int,
+        alarms: list[str] | None = None,
+        mode: str = "canary",
+    ) -> dict[str, Any]:
         """T-DEPLOY-03 — shift traffic to ``new_config`` via canary / blue-green."""
         ...
 
-    def batch_score(self, *, model_ref: ModelRef, input_uri: str, output_uri: str,
-                    resources: dict[str, Any] | None = None) -> JobHandle:
+    def batch_score(
+        self, *, model_ref: ModelRef, input_uri: str, output_uri: str, resources: dict[str, Any] | None = None
+    ) -> JobHandle:
         """T-DEPLOY-04 — run a batch-transform scoring job over ``input_uri``."""
         ...
 
@@ -342,13 +457,21 @@ class DeploymentBackend(Protocol):
         """T-DEPLOY-08 — tear the endpoint down (irreversible)."""
         ...
 
-    def recommend_config(self, *, model_ref: ModelRef, sample: str, sla: dict[str, Any] | None = None) -> list[SizingRec]:
+    def recommend_config(
+        self, *, model_ref: ModelRef, sample: str, sla: dict[str, Any] | None = None
+    ) -> list[SizingRec]:
         """T-DEPLOY-11 — recommend an inference instance/sizing config (Inference Recommender)."""
         ...
 
-    def deploy_edge(self, *, model_ref: ModelRef, compile_output: dict[str, Any] | None = None,
-                    target_device: str = "jetson_nano", greengrass_target: str | None = None,
-                    **opts: Any) -> dict[str, Any]:
+    def deploy_edge(
+        self,
+        *,
+        model_ref: ModelRef,
+        compile_output: dict[str, Any] | None = None,
+        target_device: str = "jetson_nano",
+        greengrass_target: str | None = None,
+        **opts: Any,
+    ) -> dict[str, Any]:
         """T-DEPLOY-10b (G3) — compile (Neo) → package (Edge Manager) → optionally deploy (Greengrass V2).
 
         Additive edge/embedded path that consumes a Neo ``compile`` output and packages/deploys it
@@ -368,8 +491,14 @@ class ExplainabilityBackend(Protocol):
     M0 adapter: ``ClarifyBackend`` (wraps ``run_clarify``). doc 06 Part 3 row 12.
     """
 
-    def bias_and_shap(self, *, dataset_uri: str, target: str,
-                      sensitive_cols: list[str] | None = None, model_ref: ModelRef | None = None) -> ExplainReport: ...
+    def bias_and_shap(
+        self,
+        *,
+        dataset_uri: str,
+        target: str,
+        sensitive_cols: list[str] | None = None,
+        model_ref: ModelRef | None = None,
+    ) -> ExplainReport: ...
 
 
 @runtime_checkable
@@ -381,8 +510,9 @@ class EvaluationBackend(Protocol):
     rich ``arbiter.schema.ArbiterReport`` unchanged (wrap, don't reshape).
     """
 
-    def grade(self, *, spec: Any, y_true: Any, y_pred: Any,
-              baseline_score: float | None = None, **kwargs: Any) -> Any: ...
+    def grade(
+        self, *, spec: Any, y_true: Any, y_pred: Any, baseline_score: float | None = None, **kwargs: Any
+    ) -> Any: ...
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -396,8 +526,15 @@ class ModelRegistryBackend(Protocol):
     + ``JSONFileRegistryBackend`` (tests). doc 05 §4.2 G4.
     """
 
-    def register(self, *, group: str, artifact: str, image: str | None = None,
-                 metrics: dict[str, Any] | None = None, approval: str = "PendingManualApproval") -> PackageRef: ...
+    def register(
+        self,
+        *,
+        group: str,
+        artifact: str,
+        image: str | None = None,
+        metrics: dict[str, Any] | None = None,
+        approval: str = "PendingManualApproval",
+    ) -> PackageRef: ...
 
     def approve(self, *, package: str, status: str = "Approved", reason: str | None = None) -> str: ...
 
@@ -416,23 +553,45 @@ class MonitoringBackend(Protocol):
     adapter is thin boto3 orchestration (ADR-004). doc 05 §4.2 G4; ADR-008.
     """
 
-    def setup(self, *, endpoint: str, baseline_uri: str, monitor_types: list[str] | None = None,
-              schedule: str = "hourly") -> ScheduleRef: ...
+    def setup(
+        self,
+        *,
+        endpoint: str,
+        baseline_uri: str,
+        monitor_types: list[str] | None = None,
+        schedule: str = "hourly",
+    ) -> ScheduleRef: ...
 
     def inspect(self, *, schedule: str) -> MonitorReport: ...
 
-    def metrics(self, *, namespace: str, metric: str, dims: dict[str, Any] | None = None,
-                period: int = 300) -> dict[str, Any]: ...
+    def metrics(
+        self, *, namespace: str, metric: str, dims: dict[str, Any] | None = None, period: int = 300
+    ) -> dict[str, Any]: ...
 
     # ── M5 extension (T-MON-03..10; the parameterized 6-drift tool + observability) ──
-    def analyze_drift(self, *, drift_type: str = "data", reference: Any = None, current: Any = None,
-                      threshold: float | None = None, **kwargs: Any) -> DriftReport: ...
+    def analyze_drift(
+        self,
+        *,
+        drift_type: str = "data",
+        reference: Any = None,
+        current: Any = None,
+        threshold: float | None = None,
+        **kwargs: Any,
+    ) -> DriftReport: ...
 
-    def put_custom_metric(self, *, namespace: str, metric: str, value: float,
-                          dims: dict[str, Any] | None = None) -> dict[str, Any]: ...
+    def put_custom_metric(
+        self, *, namespace: str, metric: str, value: float, dims: dict[str, Any] | None = None
+    ) -> dict[str, Any]: ...
 
-    def configure_alert(self, *, metric: str, threshold: float, comparison: str = "GreaterThanThreshold",
-                        action: str = "", namespace: str = "Amlas/ML") -> dict[str, Any]: ...
+    def configure_alert(
+        self,
+        *,
+        metric: str,
+        threshold: float,
+        comparison: str = "GreaterThanThreshold",
+        action: str = "",
+        namespace: str = "Amlas/ML",
+    ) -> dict[str, Any]: ...
 
     def build_dashboard(self, *, endpoint: str, panels: list[str] | None = None) -> dict[str, Any]: ...
 
@@ -447,10 +606,18 @@ class MonitoringBackend(Protocol):
 class ExperimentTrackingBackend(Protocol):
     """Experiment run logging and search through the local leaderboard store."""
 
-    def log_run(self, *, experiment: str, params: dict[str, Any], metrics: dict[str, Any],
-                artifacts: dict[str, Any] | None = None) -> str: ...
+    def log_run(
+        self,
+        *,
+        experiment: str,
+        params: dict[str, Any],
+        metrics: dict[str, Any],
+        artifacts: dict[str, Any] | None = None,
+    ) -> str: ...
 
-    def search(self, *, experiment: str, filter: str | None = None, order_by: str | None = None) -> list[dict[str, Any]]: ...
+    def search(
+        self, *, experiment: str, filter: str | None = None, order_by: str | None = None
+    ) -> list[dict[str, Any]]: ...
 
 
 @runtime_checkable
@@ -477,12 +644,15 @@ class OrchestrationBackend(Protocol):
     the Protocol + stub only.
     """
 
-    def run_flow(self, *, flow_id: str, spec: Any, params: dict[str, Any] | None = None,
-                 steering: Any | None = None) -> dict[str, Any]: ...
+    def run_flow(
+        self, *, flow_id: str, spec: Any, params: dict[str, Any] | None = None, steering: Any | None = None
+    ) -> dict[str, Any]: ...
 
     def register_callback(self, *, source: str, detail_type: str, resume_target: str) -> dict[str, Any]: ...
 
-    def run_workflow(self, *, definition: dict[str, Any], input: dict[str, Any] | None = None) -> ExecutionRef: ...
+    def run_workflow(
+        self, *, definition: dict[str, Any], input: dict[str, Any] | None = None
+    ) -> ExecutionRef: ...
 
 
 @runtime_checkable
@@ -531,8 +701,9 @@ class ModelBackend(Protocol):
     provider seam, recorded here for the 25-port set. doc 05 §4.2 G5.
     """
 
-    def stream(self, *, messages: Any, tool_specs: Any | None = None,
-               system_prompt: str | None = None) -> Iterable[Any]: ...
+    def stream(
+        self, *, messages: Any, tool_specs: Any | None = None, system_prompt: str | None = None
+    ) -> Iterable[Any]: ...
 
 
 @runtime_checkable
@@ -574,16 +745,91 @@ class RuntimeBackend(Protocol):
 # ══════════════════════════════════════════════════════════════════════════════
 # Introspection — the canonical port set + the env-key derivation
 # ══════════════════════════════════════════════════════════════════════════════
-# The 25 formal ports (doc 05 §4.6): 4 ML-compute + 7 data/feature + 3
+# The 26 formal ports: 4 ML-compute + 8 data/feature + 3
 # deploy/serve/eval + 7 MLOps/gov/orchestration (GuardrailBackend counted within
 # group 4) + 4 agent-runtime. The registry resolves any of these.
+@runtime_checkable
+class CodingPreparationBackend(Protocol):
+    """Managed preparation over private acquired versions; no caller resources."""
+
+    backend_name: str
+
+    def submit(
+        self,
+        *,
+        sources: tuple[VerifiedPreparationSource, ...],
+        catalog: PreparationCatalog,
+        runtime_session_id: str,
+    ) -> JobHandle: ...
+    def status(self, handle: JobHandle) -> JobStatus: ...
+    def artifacts(self, handle: JobHandle) -> dict[str, Any]: ...
+
+
+if TYPE_CHECKING:
+    from ..control_plane.sft_state import (
+        SftCatalog,
+        VerifiedSftCheckpointSource,
+        VerifiedSftInputs,
+        VerifiedSftModelSource,
+    )
+
+
+@runtime_checkable
+class QwenSftBackend(Protocol):
+    """Fixed catalog SFT/reload; all infrastructure authority is private."""
+
+    backend_name: str
+
+    def submit(
+        self, *, inputs: VerifiedSftInputs, catalog: SftCatalog, recipe_id: str, runtime_session_id: str
+    ) -> JobHandle: ...
+    def reload(
+        self,
+        *,
+        model: VerifiedSftModelSource,
+        checkpoint: VerifiedSftCheckpointSource,
+        catalog: SftCatalog,
+        runtime_session_id: str,
+    ) -> JobHandle: ...
+    def status(self, handle: JobHandle) -> JobStatus: ...
+    def artifacts(self, handle: JobHandle) -> dict[str, Any]: ...
+
+
+@runtime_checkable
+class CodingGenerationBackend(Protocol):
+    """Fixed paired candidate generation; all infrastructure authority is private."""
+
+    backend_name: str
+
+    def submit(self, **kwargs: Any) -> JobHandle: ...
+    def status(self, handle: JobHandle) -> JobStatus: ...
+    def artifacts(self, handle: JobHandle) -> dict[str, Any]: ...
+
+
+@runtime_checkable
+class PairedCodingBackend(Protocol):
+    """Fixed managed parent evaluation from private original immutable sources."""
+    backend_name: str
+    def submit(self, **kwargs: Any) -> JobHandle: ...
+    def status(self, handle: JobHandle) -> JobStatus: ...
+    def artifacts(self, handle: JobHandle) -> dict[str, Any]: ...
+
+
 ALL_PORTS: tuple[type, ...] = (
     # Group 1
     TrainingBackend,
+    QwenSftBackend,
+    CodingGenerationBackend,
+    PairedCodingBackend,
     TuningBackend,
     AutoMLBackend,
     ModelHubBackend,
+    ModelWeightAcquisitionBackend,
     # Group 2
+    DataAcquisitionBackend,
+    DataInspectionBackend,
+    CodingPreparationBackend,
+    CodingCaseFreezeBackend,
     ETLBackend,
     DataQualityBackend,
     FeatureStoreBackend,
@@ -617,10 +863,18 @@ ALL_PORTS: tuple[type, ...] = (
 # ``.env.*.example`` agree on.
 _PORT_ENV_KEYS: dict[str, str] = {
     "TrainingBackend": "TRAINING_BACKEND",
+    "QwenSftBackend": "QWEN_SFT_BACKEND",
+    "CodingGenerationBackend": "CODING_GENERATION_BACKEND",
+    "PairedCodingBackend": "CODING_PAIR_BACKEND",
     "TuningBackend": "TUNING_BACKEND",
     "AutoMLBackend": "AUTOML_BACKEND",
     "ModelHubBackend": "MODELHUB_BACKEND",
+    "ModelWeightAcquisitionBackend": "MODEL_WEIGHT_ACQUISITION_BACKEND",
     "ETLBackend": "ETL_BACKEND",
+    "DataAcquisitionBackend": "DATA_ACQUISITION_BACKEND",
+    "DataInspectionBackend": "DATA_INSPECTION_BACKEND",
+    "CodingPreparationBackend": "DATA_PREPARATION_BACKEND",
+    "CodingCaseFreezeBackend": "CODING_CASE_FREEZE_BACKEND",
     "DataQualityBackend": "DQ_BACKEND",
     "FeatureStoreBackend": "FEATURE_STORE_BACKEND",
     "LakeBackend": "LAKE_BACKEND",
@@ -641,11 +895,11 @@ _PORT_ENV_KEYS: dict[str, str] = {
     "MemoryBackend": "MEMORY_BACKEND",
     "SandboxBackend": "SANDBOX_BACKEND",
     "RuntimeBackend": "RUNTIME_BACKEND",
-    # Control-plane FACET (not one of the 25 formal ports above, so NOT in
+    # Control-plane FACET (not one of the 26 formal ports above, so NOT in
     # ``ALL_PORTS``): the cost-governance CostAdvisor facet (doc 05 §8.3/§8.8 /
     # roadmap M8). It is registered + resolved through the same registry, so it
     # needs a stable selector key — but it is intentionally absent from
-    # ``ALL_PORTS`` to keep the formal-port count at 25 (the M0 conformance
+    # ``ALL_PORTS`` to keep the formal-port count at 26 (the conformance
     # contract). The class itself lives in ``control_plane/cost_governance.py``;
     # keyed here by name only so ``ports.py`` stays import-cycle-free.
     "CostAdvisorBackend": "COST_ADVISOR_BACKEND",

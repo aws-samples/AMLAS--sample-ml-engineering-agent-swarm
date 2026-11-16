@@ -1,0 +1,23 @@
+[package]
+name = "amlas-processing-init"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+members = ["."]
+
+[profile.release]
+panic = "abort"
+lto = true
+codegen-units = 1
+strip = true
+
+[features]
+default = []
+sagemaker-native-v1 = []
+oracle-child-v1 = []
+
+[[bin]]
+name = "amlas-oracle-init"
+path = "src/oracle_main.rs"
+required-features = ["oracle-child-v1"]

@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from test_astra_safeguards import _assert_location_guard, _setup_location_guard
 from test_runtime_deployment_advisory import run_runtime, runtime_calls
 from test_runtime_deployment_advisory import runtime_workspace as runtime_workspace
 from test_shell_entrypoint_advisory import calls, invoke
@@ -64,7 +65,10 @@ def test_default_runtime_role_is_region_scoped(runtime_workspace: tuple[Path, di
     result = run_runtime(runtime_workspace)
     assert result.returncode == 0, result.stdout + result.stderr
     selected = next(
-        call for call in runtime_calls(runtime_workspace) if call["args"][:2] == ["iam", "get-role"]
+        call
+        for call in runtime_calls(runtime_workspace)
+        if call["args"][:2] == ["iam", "get-role"]
+        and call["args"][call["args"].index("--role-name") + 1] != "amlas-sagemaker-exec"
     )
     assert selected["args"][selected["args"].index("--role-name") + 1] == "amlas-runtime-exec-us-east-1"
 
@@ -111,6 +115,7 @@ def test_main_setup_passes_selected_runtime_and_role_to_helper(
     shell_workspace: tuple[Path, dict[str, str], Path],
 ) -> None:
     repo, env, _ = shell_workspace
+    _setup_location_guard(repo)
     tools = Path(env["PATH"].split(":")[0])
     tool = tools / "aws"
     source = tool.read_text().replace(
@@ -132,6 +137,10 @@ def test_main_setup_passes_selected_runtime_and_role_to_helper(
         "#!/usr/bin/env bash\nset -eu\n"
         'printf "SELECTED=%s,%s\\n" "$AGENTCORE_RUNTIME_NAME" "$AGENTCORE_EXEC_ROLE_NAME"\n'
         'printf "AGENTCORE_RUNTIME_ARN=arn:aws:bedrock-agentcore:us-east-1:111122223333:runtime/example\\nFINAL_STATUS=READY\\nAGENTCORE_RUNTIME_DEPLOY_DONE\\n"\n'
+        'role="${SAGEMAKER_EXECUTION_ROLE_ARN:-${AMLAS_SAGEMAKER_ROLE_ARN:-arn:aws:iam::${AWS_ACCOUNT_ID}:role/${AMLAS_DEPLOYMENT_PREFIX:-amlas}-sagemaker-exec}}"\n'
+        'printf "RESOLVED_SAGEMAKER_ROLE_ARN=%s\\n" "$role"\n'
+        'printf "RESOLVED_DATA_ACQUISITION_IMAGE_URI=%s\\n" "${AMLAS_DATA_ACQUISITION_IMAGE_URI:-}"\n'
+        'printf "RESOLVED_DATA_ACQUISITION_SOURCE_COMMIT=%s\\n" "${AMLAS_DATA_ACQUISITION_SOURCE_COMMIT:-}"\n'
     )
     env.update(AGENTCORE_RUNTIME_NAME="env_runtime", AGENTCORE_EXEC_ROLE_NAME="env-role")
     result = invoke(
@@ -148,3 +157,4 @@ def test_main_setup_passes_selected_runtime_and_role_to_helper(
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "SELECTED=selected_runtime,selected-role" in result.stdout
+    _assert_location_guard(calls(shell_workspace))

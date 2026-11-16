@@ -98,6 +98,7 @@ BACKEND_ENV_KEYS: tuple[str, ...] = (
     "AUTOML_BACKEND",
     "MODELHUB_BACKEND",
     "ETL_BACKEND",
+    "DATA_ACQUISITION_BACKEND",
     "DQ_BACKEND",
     "FEATURE_STORE_BACKEND",
     "LAKE_BACKEND",
@@ -120,6 +121,7 @@ BACKEND_ENV_KEYS: tuple[str, ...] = (
 # the registry pick by scale/budget/offline (these are the no-pin defaults).
 DEFAULT_BACKEND_SELECTORS: dict[str, str] = {
     "TRAINING_BACKEND": "sagemaker",
+    "DATA_ACQUISITION_BACKEND": "processing",
     "EVALUATION_BACKEND": "arbiter",  # the deterministic Arbiter (ADR-003)
     "MODEL_REGISTRY_BACKEND": "sagemaker",
     "LAKE_BACKEND": "s3medallion",

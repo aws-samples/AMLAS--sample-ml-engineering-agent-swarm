@@ -288,84 +288,13 @@ def load_predictions(
 
 
 # ---------------------------------------------------------------------------
-# FIX-19 (Subtask-13) — secure recovery of object-dtype STRING-LABEL y_pred .npy.
-#
-# The hard 7-class run trained a real model (CV f1_macro=0.80) and wrote y_pred as an
-# OBJECT-dtype .npy of string class labels ("normal"/"mixed_fault_1"/...). numpy stores
-# object arrays via pickle, so ``np.load(allow_pickle=False)`` raises "Object arrays
-# cannot be loaded when allow_pickle=False" — the Arbiter could not load y_pred and the
-# run failed with no grade (G-METRIC miss). Prior missions used integer labels so this
-# latent defect never fired. We must recover such predictions WITHOUT enabling arbitrary
-# pickle (SEC-A15 / model-artifact posture): a RESTRICTED unpickler that resolves ONLY
-# numpy's array-reconstruction primitives + Python scalar types refuses any other class
-# (e.g. os.system) → hostile payloads raise, they never execute.
+# All prediction/label arrays use the shared data-only artifact boundary.
+# Legacy object-pickle arrays require separately isolated conversion; they
+# must never be reconstructed in this process, even with a class allowlist.
 # ---------------------------------------------------------------------------
 
-# The exact set of globals a legitimate numpy object-array pickle needs to rebuild a 1-D
-# array of Python str/int/float/bool. Anything else (os.system, subprocess, builtins.eval,
-# arbitrary classes) is REFUSED by _RestrictedUnpickler.find_class.
-_ALLOWED_PICKLE_GLOBALS: frozenset[tuple[str, str]] = frozenset(
-    {
-        ("numpy", "ndarray"),
-        ("numpy", "dtype"),
-        ("numpy.core.multiarray", "_reconstruct"),
-        ("numpy.core.multiarray", "scalar"),
-        ("numpy._core.multiarray", "_reconstruct"),  # numpy>=2 module path
-        ("numpy._core.multiarray", "scalar"),
-        ("builtins", "str"),
-        ("builtins", "int"),
-        ("builtins", "float"),
-        ("builtins", "bool"),
-        ("builtins", "bytes"),
-        ("builtins", "list"),
-        ("builtins", "tuple"),
-    }
-)
-
-
 def _load_npy_secure(p: Path) -> np.ndarray:
-    """Load a ``.npy`` with ``allow_pickle=False``; on an object-array ValueError, recover
-    the label vector via a SECURITY-RESTRICTED unpickler (numpy reconstruction + scalars
-    ONLY). Never enables arbitrary pickle — hostile payloads are refused, not executed."""
-    try:
-        return np.asarray(np.load(p, allow_pickle=False))
-    except ValueError as e:
-        if "allow_pickle" not in str(e) and "Object arrays" not in str(e):
-            raise
-        # Object-dtype array (string/mixed labels). Recover via a restricted unpickler that
-        # ONLY resolves numpy array reconstruction + Python scalars. This is the same
-        # trust-narrowing pattern skops uses for model artifacts — pickle is NEVER opened
-        # to arbitrary classes.
-        import pickle  # nosec B403
+    """Load a bounded data vector with no pickle compatibility fallback."""
+    from ..security.model_artifacts import load_numpy_data
 
-        class _RestrictedUnpickler(pickle.Unpickler):
-            def find_class(self, module: str, name: str) -> Any:
-                if (module, name) in _ALLOWED_PICKLE_GLOBALS:
-                    return super().find_class(module, name)
-                raise pickle.UnpicklingError(  # nosemgrep: avoid-pickle
-                    f"refused disallowed global for y_pred recovery: {module}.{name}"
-                )
-
-        # numpy .npy layout: 6-byte magic \x93NUMPY, 2-byte version, header-len, header,
-        # then the pickled object-array body. numpy's own reader parses the (untrusted-safe)
-        # header; we only feed the pickle BODY to the restricted unpickler. Using numpy's
-        # format module keeps header parsing correct across .npy versions (v1.0/v2.0 use
-        # different header readers).
-        from numpy.lib import format as _npformat
-
-        with open(p, "rb") as f:
-            major, minor = _npformat.read_magic(f)
-            if (major, minor) >= (2, 0):
-                shape, _fortran, dtype = _npformat.read_array_header_2_0(f)
-            else:
-                shape, _fortran, dtype = _npformat.read_array_header_1_0(f)
-            if not dtype.hasobject:
-                # Non-object dtype that still tripped allow_pickle (shouldn't happen) — re-raise.
-                raise
-            # The remainder of the file is the pickled object array body.
-            arr = _RestrictedUnpickler(f).load()
-            out = np.asarray(arr)
-            # Defensive: enforce the header shape (a mismatch means a malformed file).
-            if out.shape != shape and out.size == int(np.prod(shape or (out.size,))):
-                out = out.reshape(shape)
-            return out
+    return np.asarray(load_numpy_data(p))

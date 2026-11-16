@@ -11,6 +11,8 @@ Inherits [../AGENTS.md](../AGENTS.md); this document owns the files directly in 
 ## Local Contracts
 
 - `agentic_runner.py:build_pipeline_agent` — Build the autonomous ML pipeline agent.
+- Pipeline tools expose public dataset inspection and pinned acquisition with
+  explicit provider/artifact/lineage references; acquisition does not prove preparation.
 - `orchestrator.py:PipelineResult` — Full pipeline output containing all artifacts and intermediate results.
 - `orchestrator.py:MLPipeline` — Orchestrates the full ML engineering pipeline.
 - Owned files: `__init__.py`, `agentic_runner.py`, `orchestrator.py`.

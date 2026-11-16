@@ -374,7 +374,15 @@ def test_page_text_excerpt_reports_complete_or_partial_coverage(
         module, "_request_public", lambda *args: (200, {"content-type": "text/plain"}, b"x" * characters)
     )
     page = module.fetch_public_urls(["https://example.com/page"])["pages"][0]
-    assert page["text_characters_returned"] == min(characters, 20000)
+    # The whole tool result is bounded by the serialized projection budget, so a long page is shortened
+    # to what fits beside its metadata; a short page stays complete.
+    partial = characters > module._TOOL_CONTENT_BYTES
+    returned = page["text_characters_returned"]
+    if partial:
+        assert 0 < returned < characters
+    else:
+        assert returned == characters
+    assert returned <= min(characters, 20000, module._TOOL_CONTENT_BYTES)
     assert page["text_characters_available"] == characters
-    assert page["text_truncated"] is (characters > 20000)
-    assert page["content_coverage"] == ("partial" if characters > 20000 else "complete")
+    assert page["text_truncated"] is partial
+    assert page["content_coverage"] == ("partial" if partial else "complete")
