@@ -4,9 +4,21 @@ This file lists notable changes for users and maintainers. The format follows [K
 
 Each release has a version `N.NN` held in the root `VERSION` file. `N` is the release line. `NN` is a counter of at least two digits that rises by one with every release that changes what a user or maintainer sees. The package version is the same number written as `N.<NN as an integer>.0`. For example, release `0.06` is package version `0.6.0`.
 
-The numbers `0.01` to `0.05` were assigned afterwards, and those releases carried the package version `0.1.0`.
+The numbers `0.01` to `0.05` were assigned afterwards. Releases `0.01` to `0.05` and the first publication of `0.06` carried the package version `0.1.0`.
 
 ## [Unreleased]
+
+## [0.07] - 2026-11-16
+
+### Changed
+
+- Changed the container recipes `Dockerfile`, `Dockerfile.processing`, `Dockerfile.model-acquisition` and `Dockerfile.coding-pair` to copy the root `VERSION` file, so the application in those images reports the package version instead of `unknown`.
+- Changed the README clone command, CI badge and project layout and the GitLab synchronization job to the repository's new name, `AMLAS--sample-ml-engineering-agent-swarm`.
+- Changed the release rules in `AGENTS.md` to tie human approval to the content the approver saw instead of an exact tree hash; changes limited to conflict-free teammate merges or edits required by the standing release rules need no new approval when the release checks pass on the new tree, while other content changes still do.
+
+### Fixed
+
+- Fixed timing-dependent failures of the continuation tests by making `start_original_target` in `tests/case_prep_continuation_fixtures.py`, `tests/test_normal_research_profile.py`, `tests/test_runtime_pair_original_capture.py` and `tests/test_sdk_pending_handoff.py` wait until the run had read or retained the original before reading its state.
 
 ## [0.06] - 2026-11-16
 
@@ -38,6 +50,7 @@ The numbers `0.01` to `0.05` were assigned afterwards, and those releases carrie
 - Changed baseline training results to report `waiting`, `failed` or `unassessed`, and deploy results to report `waiting` during endpoint creation.
 - Changed the data collection agent prompt to cover inspection and pinned acquisition of public datasets.
 - Updated both CI paths to provision the pinned public evaluation file for Python tests through `scripts/provision_qwen_cpu_tests.sh`, exported as `AMLAS_TEST_HUMANEVAL_PARQUET`, and run `processing_bootstrap` tests with one test thread (`RUST_TEST_THREADS=1`); moved the GitLab `verify` and `processing-bootstrap` jobs to large runners.
+- Changed `amlas --version`, `amlas info version` and `amlas.__version__` to report the package version of the release, read from the root `VERSION` file, instead of a fixed `0.1.0`.
 
 ### Fixed
 

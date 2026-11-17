@@ -174,6 +174,12 @@ async def start_original_target(work, monkeypatch, tmp_path):
     # The next model stream proves the initial tool-result turn/hook chain completed.
     await wait_until(lambda: work.model.calls >= 4, reader, "target initial SDK turn did not finish")
     assert work.model.calls == 4, {"calls": work.model.calls, "reader_done": reader.done()}
+    # The stream stand-in counts a call when its stream starts; the SDK appends that call's
+    # answer afterwards. The source reads the target original only after that turn has returned,
+    # so its first read is the passive boundary where history and capture are settled.
+    await wait_until(
+        lambda: bool(work.target.actual_observed), reader, "original target observer boundary missing"
+    )
     result = matches[0]
     assert result.get("accepted") is True, {
         "status": result.get("status"),

@@ -22,7 +22,7 @@ UNKNOWN_SECONDS = 0.5
 DEFAULT_SPLIT_FRACTION = 0.5
 DEFAULT_ISOLATE_SECONDS = 300.0
 
-_ILLEGAL_XML = re.compile("[^\t\n\r\x20-\x7e\x80-\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]")
+_ILLEGAL_XML = re.compile(r"[^\t\n\r\x20-\x7e\x80-\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]")
 
 
 class PlanError(Exception):

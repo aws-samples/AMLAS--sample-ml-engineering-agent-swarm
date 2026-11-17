@@ -118,6 +118,10 @@ def test_normal_sdk_pair_retains_actual_typed_native_original_after_model_resume
             assert record.extra["evaluation_binding"].source_sha256 == DECLARED_CASE_SOURCE_SHA256
             assert record.extra["runtime_session_id"] == store.runtime_session_id
             assert len(validated) == 1
+            # The fixture's result recorder runs before the source's after-tool hook retains the original.
+            while not [value for value in backend._warm_pending_producers.values() if value.kind == "pair"]:
+                assert not reader.done() and asyncio.get_running_loop().time() < deadline
+                await asyncio.sleep(0.005)
             pending = [value for value in backend._warm_pending_producers.values() if value.kind == "pair"]
             assert len(pending) == 1, "genuine source-built Pair original was lost at its typed pin projection"
             assert pending[0].record is record and pending[0].store is store and pending[0].adapter is adapter

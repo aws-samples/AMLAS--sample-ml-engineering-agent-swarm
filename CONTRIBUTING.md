@@ -40,8 +40,12 @@ For any change a user or maintainer would notice, add one line under `## [Unrele
 physical line in past tense naming the option, command or behaviour.
 
 Releases are numbered `N.NN`. The root `VERSION` file is the one source of that number.
-Maintainers raise it in the release change, together with the `pyproject.toml` version, and
-move the Unreleased lines under a `## [N.NN] - YYYY-MM-DD` heading.
+Maintainers raise it in the release change, together with the `pyproject.toml` version and the
+project's own record in `uv.lock`, and move the Unreleased lines under a
+`## [N.NN] - YYYY-MM-DD` heading. The counter `NN` rises by one with each such release.
+`N` rises only when the maintainers decide to start a new release line; `NN` then restarts at `00`.
+A publication that changes nothing a user or maintainer sees keeps its `VERSION` and gets no new
+changelog heading.
 Leave `VERSION` unchanged in any other change.
 
 ## Code of Conduct

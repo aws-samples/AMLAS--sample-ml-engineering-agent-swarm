@@ -488,6 +488,11 @@ def test_profile_data_completion_next_pending_batch_uses_same_result_qualificati
                 await asyncio.sleep(0.005)
             assert not reader.done() and work.model.calls == 1
             backend = work.engines[0].tool_backend
+            # The DATA tool reads its own submission before it returns; the source retains the
+            # original afterwards, in its after-tool hook.
+            while not backend._warm_pending_producers:
+                assert not reader.done() and asyncio.get_running_loop().time() < deadline
+                await asyncio.sleep(0.005)
             pending = next(iter(backend._warm_pending_producers.values()))
             before = copy.deepcopy(work.agents[0].messages)
             populate(pending.record.handle, data.s3)

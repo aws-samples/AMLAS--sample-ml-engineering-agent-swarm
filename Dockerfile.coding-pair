@@ -37,6 +37,7 @@ COPY --chmod=0555 src/amlas/evaluation/coding_oracle.py /app/oracle/coding_oracl
 COPY --chmod=0555 src/amlas/evaluation/coding_oracle_catalog.py /app/oracle/coding_oracle_catalog.py
 WORKDIR /app
 COPY --chmod=0555 src/ /app/src/
+COPY --chmod=0444 VERSION /app/VERSION
 COPY --chmod=0555 scripts/coding_pair_worker_native.py /app/coding_pair_worker.py
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 ENV OTEL_SDK_DISABLED=true STRANDS_TELEMETRY_ENABLED=false

@@ -77,6 +77,11 @@ def _sections() -> list[tuple[str, list[str]]]:
     return sections
 
 
+def follows(newer: tuple[int, int], older: tuple[int, int]) -> bool:
+    """Return whether a version is the next release: the counter one higher, or a new release line at 00."""
+    return newer == (older[0], older[1] + 1) or (newer[0] > older[0] and newer[1] == 0)
+
+
 def release_heading_problems(headings: list[str]) -> list[str]:
     """Return what is wrong with the level-two headings of a changelog, given in file order."""
     problems = []
@@ -107,6 +112,11 @@ def release_heading_problems(headings: list[str]) -> list[str]:
         (version, date, heading), (older_version, older_date, older_heading) = newer, older
         if version <= older_version:
             problems.append(f"versions must strictly decrease: {heading!r} is followed by {older_heading!r}")
+        elif not follows(version, older_version):
+            problems.append(
+                "a release raises the counter by one or starts a new release line at 00: "
+                f"{heading!r} is followed by {older_heading!r}"
+            )
         if date < older_date:
             problems.append(f"dates must not increase: {heading!r} is followed by {older_heading!r}")
     return problems
@@ -135,6 +145,13 @@ def test_aligned_headings_are_accepted() -> None:
     assert release_heading_problems([UNRELEASED, "## [0.06] - 2026-01-02"]) == []
     assert release_heading_problems([UNRELEASED, "## [1.00] - 2026-03-01", "## [0.123] - 2026-03-01"]) == []
     assert release_heading_problems([UNRELEASED, "## [0.06] - 2026-01-02", "## [0.05] - 2026-01-02"]) == []
+    assert release_heading_problems([UNRELEASED, "## [0.100] - 2026-03-01", "## [0.99] - 2026-03-01"]) == []
+    assert (
+        release_heading_problems(
+            [UNRELEASED, "## [2.00] - 2026-05-01", "## [1.01] - 2026-04-01", "## [1.00] - 2026-03-01"]
+        )
+        == []
+    )
 
 
 @pytest.mark.parametrize(
@@ -156,6 +173,10 @@ def test_aligned_headings_are_accepted() -> None:
         [UNRELEASED, "## [0.05] - 2026-01-01", "## [0.06] - 2026-01-02"],
         [UNRELEASED, "## [0.06] - 2026-01-02", "## [0.06] - 2026-01-01"],
         [UNRELEASED, "## [0.06] - 2026-01-01", "## [0.05] - 2026-01-02"],
+        [UNRELEASED, "## [0.08] - 2026-01-03", "## [0.06] - 2026-01-02"],
+        [UNRELEASED, "## [1.01] - 2026-03-01", "## [0.06] - 2026-01-02"],
+        [UNRELEASED, "## [1.07] - 2026-03-01", "## [0.06] - 2026-01-02"],
+        [UNRELEASED, "## [1.00] - 2026-03-01", "## [0.07] - 2026-02-01", "## [0.05] - 2026-01-01"],
     ],
 )
 def test_drifted_headings_are_reported(headings: list[str]) -> None:
@@ -211,6 +232,10 @@ def test_upkeep_rule_is_written_in_the_contract_and_the_contributor_guide() -> N
         "Root `VERSION` is the one source of the project version.",
         "raises the counter in root `VERSION` by one",
         "raise the counter in root `VERSION` by one",
+        "`N` rises only when the maintainers decide to start a new release line; `NN` then restarts at `00`.",
+        "Versions compare as the pair of `N` and `NN` read as integers.",
+        "A publication that changes nothing a user or maintainer sees keeps its `VERSION` and gets no new "
+        "changelog heading.",
         "`tests/test_version_single_source.py`",
     ):
         assert statement in " ".join(contract.split()), f"contract lacks: {statement}"
@@ -219,7 +244,11 @@ def test_upkeep_rule_is_written_in_the_contract_and_the_contributor_guide() -> N
     for statement in (
         "add one line under `## [Unreleased]` in `CHANGELOG.md`",
         "The root `VERSION` file is the one source of that number.",
+        "together with the `pyproject.toml` version and the project's own record in `uv.lock`",
         "`" + RELEASE_HEADING_FORM + "`",
+        "`N` rises only when the maintainers decide to start a new release line; `NN` then restarts at `00`.",
+        "A publication that changes nothing a user or maintainer sees keeps its `VERSION` and gets no new "
+        "changelog heading.",
         "Leave `VERSION` unchanged in any other change.",
     ):
         assert statement in " ".join(guide.split()), f"contributor guide lacks: {statement}"

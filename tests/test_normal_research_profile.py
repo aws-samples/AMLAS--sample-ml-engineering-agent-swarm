@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -383,6 +384,17 @@ def test_normal_api_research_to_original_model_warm_completion_retains_checker_a
     f.patch_expected(monkeypatch, [adapter_source, model_acquisition_schema])
     native, s3 = f.Processing(), f.S3()
     adapter = f.configured_backend(adapter_source, native, s3)
+    observing = threading.Event()
+    describe = native.describe_processing_job
+
+    def observe_original(**kwargs):
+        # Passive actual warm-observer boundary: the source reads the original only after
+        # the initial SDK turn has returned. Create and stream start are earlier than the
+        # original capture and the tool-result message.
+        observing.set()
+        return describe(**kwargs)
+
+    monkeypatch.setattr(native, "describe_processing_job", observe_original)
     monkeypatch.setattr(model_weight_acquisition_flow, "_resolve_backend", lambda: adapter)
     model = LifecycleModel(model_acquisition=True)
     selected = setup(
@@ -408,6 +420,9 @@ def test_normal_api_research_to_original_model_warm_completion_retains_checker_a
             assert native.requests, "bound research canceled the registered MODEL acquisition"
             backend = selected.backends[0]
             while not task.done() and model.calls < 4:
+                assert asyncio.get_running_loop().time() < deadline
+                await asyncio.sleep(0.005)
+            while not task.done() and not observing.is_set():
                 assert asyncio.get_running_loop().time() < deadline
                 await asyncio.sleep(0.005)
             assert not task.done() and model.calls == 4

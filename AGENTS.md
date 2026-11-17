@@ -109,12 +109,14 @@ cross-project security requirements, and the top-level verification contract.
 1. Branch from the current GitLab `main`.
 2. For a release that changes what a user or maintainer sees, raise the counter in root
    `VERSION` by one in the release change. Update the mapped `pyproject.toml` version and
-   `uv.lock`. Move the Unreleased changelog lines under the new version heading. A release
-   that changes nothing a user or maintainer sees keeps its `VERSION`.
+   `uv.lock`. Move the Unreleased changelog lines under the new version heading. When the
+   maintainers decide to start a new release line, raise `N` and restart `NN` at `00` instead.
+   A publication that changes nothing a user or maintainer sees keeps its `VERSION` and gets
+   no new changelog heading.
 3. Prepare a public-release candidate and pass the complete sanitization,
    existing-feature regression, and core functional checks below on that exact candidate.
 4. Present the exact candidate tree hash and material scan results for human approval.
-5. After explicit approval, publish that exact tree to GitHub `main` as one new commit
+5. After explicit approval, publish the approved tree to GitHub `main` as one new commit
    on top of the current GitHub `main`, using a plain push that is never forced. The
    new release commit must have the approved release tree. The first GitHub release
    was a root commit, and every later GitHub release adds one commit. Undo a wrong
@@ -167,7 +169,7 @@ synchronization before the approved GitHub tree is available.
 - Any failed, missing, incomplete, or unverifiable required check blocks publication.
   Fix the regression, repeat the required checks, and update the release issue before
   seeking approval. A later check after GitHub publication does not satisfy this gate.
-- Preserve the existing sanitization and exact-tree human approval requirements.
+- Preserve the existing sanitization and human approval requirements.
   Passing checks does not itself authorize a GitHub write. Keep the frozen core scope;
   optional serving, broader MLOps, architecture changes and tuning are backlog work.
 
@@ -192,8 +194,11 @@ synchronization before the approved GitHub tree is available.
   allowlist in `scripts/verify_repository_governance.py`.
 - Review commit metadata as well as file content before publication.
 - The only supported symbolic link is root `CLAUDE.md` with immutable target bytes exactly `AGENTS.md` and a tracked regular root `AGENTS.md`. Other symlinks/submodules/unmerged entries remain rejected.
-- Human approval applies to the exact tree hash. Any content change invalidates the
-  approval and requires a new sanitization run and approval.
+- Human approval applies to the content the approver saw. A later change that only
+  merges a teammate's commit without a conflict, or only does what the maintainers'
+  standing release rules require (for example a version or a date line), needs no new
+  approval when the sanitization run and the required checks pass on the new tree. Any
+  other content change needs a new approval.
 
 ### Public content scope
 
@@ -222,11 +227,16 @@ synchronization before the approved GitHub tree is available.
 
 - Root `VERSION` is the one source of the project version. It holds `N.NN` and one newline.
   `N` is the release line. `NN` is a counter of at least two digits without extra leading zeros.
+- `N` rises only when the maintainers decide to start a new release line; `NN` then restarts
+  at `00`. Versions compare as the pair of `N` and `NN` read as integers.
 - `pyproject.toml` carries the mapped package version `N.<NN as an integer>.0`.
   Release `0.06` maps to package version `0.6.0`. `uv.lock` records the same version for the
   project's own package.
 - State the version nowhere else. The application reports it through `src/amlas/_version.py`,
   which reads `VERSION` in a source checkout and the installed package metadata otherwise.
+- A container recipe that copies `src/` into its final image also copies root `VERSION` beside
+  that directory, so the application in the image reports the version. Keep this pinned by
+  `tests/test_image_version_file.py`.
 - The release change for every release that changes what a user or maintainer sees raises the
   counter in root `VERSION` by one. Edit `VERSION` and the `pyproject.toml` version together.
   Regenerate `uv.lock` with `uv lock` so that only the project's own version line changes.

@@ -119,5 +119,5 @@ sync-main:
   rules:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
   script:
-    - git fetch --no-tags --depth=1 https://github.com/aws-samples/sample-ml-engineering-agent-swarm.git main:refs/remotes/github/main
+    - git fetch --no-tags --depth=1 https://github.com/aws-samples/AMLAS--sample-ml-engineering-agent-swarm.git main:refs/remotes/github/main
     - python scripts/verify_repository_governance.py --compare-refs HEAD refs/remotes/github/main

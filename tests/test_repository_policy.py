@@ -36,7 +36,7 @@ def test_release_form_adds_one_commit_by_a_plain_push() -> None:
     required_statements = (
         "The tips of the two `main` branches have different commit IDs because GitLab retains "
         "development history while each GitHub release is one commit.",
-        "After explicit approval, publish that exact tree to GitHub `main` as one new commit on top "
+        "After explicit approval, publish the approved tree to GitHub `main` as one new commit on top "
         "of the current GitHub `main`, using a plain push that is never forced.",
         "The new release commit must have the approved release tree.",
         "The first GitHub release was a root commit, and every later GitHub release adds one commit.",
@@ -48,11 +48,21 @@ def test_release_form_adds_one_commit_by_a_plain_push() -> None:
     kept_statements = (
         "Present the exact candidate tree hash and material scan results for human approval.",
         "Never publish to GitHub first and sanitize afterward.",
-        "Human approval applies to the exact tree hash.",
+        "Human approval applies to the content the approver saw. A later change that only merges a "
+        "teammate's commit without a conflict, or only does what the maintainers' standing release "
+        "rules require (for example a version or a date line), needs no new approval when the "
+        "sanitization run and the required checks pass on the new tree. Any other content change "
+        "needs a new approval.",
         "Treat every GitHub write as public disclosure, even when repository visibility is "
         "temporarily private.",
     )
-    retired_phrases = ("fresh-root", "force-with-lease")
+    retired_phrases = (
+        "fresh-root",
+        "force-with-lease",
+        "Human approval applies to the exact tree hash",
+        "publish that exact tree",
+        "exact-tree human approval",
+    )
     problems = [f"missing: {statement}" for statement in required_statements if statement not in policy]
     problems += [f"dropped: {statement}" for statement in kept_statements if statement not in policy]
     problems += [f"retired phrase present: {phrase}" for phrase in retired_phrases if phrase in policy]

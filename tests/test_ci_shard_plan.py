@@ -86,6 +86,35 @@ class CollectionTests(unittest.TestCase):
         )
         self.assertEqual(key("tests/test_a.py::test_x[\x01]"), ("tests.test_a", "test_x[#x01]"))
 
+    def test_name_escape_keeps_exactly_the_characters_the_junit_writer_keeps(self):
+        # Kept: tab, line feed, carriage return, U+0020..U+007E, U+0080..U+D7FF, U+E000..U+FFFD and
+        # U+10000..U+10FFFF. Every other code point is written as "#x" and its number in upper-case hexadecimal.
+        def kept(cp):
+            return (
+                cp in (0x9, 0xA, 0xD)
+                or 0x20 <= cp <= 0x7E
+                or 0x80 <= cp <= 0xD7FF
+                or 0xE000 <= cp <= 0xFFFD
+                or cp >= 0x10000
+            )
+
+        text = "".join(map(chr, range(0x110000)))
+        escaped = {ord(ch) for ch in shard_plan._ILLEGAL_XML.findall(text)}
+        expected = {cp for cp in range(0x110000) if not kept(cp)}
+        self.assertEqual(sorted(escaped ^ expected)[:8], [])
+        self.assertEqual(len(escaped), 2080)
+        key = shard_plan.junit_key
+        self.assertEqual(key("tests/test_a.py::test_x[\x7f]"), ("tests.test_a", "test_x[#x7F]"))
+        self.assertEqual(key("tests/test_a.py::test_x[\ud800]"), ("tests.test_a", "test_x[#xD800]"))
+        self.assertEqual(key("tests/test_a.py::test_x[\ufffe]"), ("tests.test_a", "test_x[#xFFFE]"))
+        for ch in ("\t", "\x80", "\ud7ff", "\ue000", "\ufffd", "\U00010000", "\U0001f600", "\U0010ffff"):
+            self.assertEqual(key(f"tests/test_a.py::test_x[{ch}]"), ("tests.test_a", f"test_x[{ch}]"))
+
+    def test_name_escape_pattern_text_is_plain_ascii(self):
+        # The character class is spelled with regular-expression escapes, so the pattern text holds no raw control
+        # character and no character above U+FFFF, and reads the same counted per code point and per UTF-16 unit.
+        self.assertTrue(shard_plan._ILLEGAL_XML.pattern.isascii(), ascii(shard_plan._ILLEGAL_XML.pattern))
+
     def test_junit_key_index_refuses_two_ids_with_one_key(self):
         ids = ["tests/a.b.py::x", "tests/a/b.py::x"]
         with self.assertRaises(shard_plan.PlanError):

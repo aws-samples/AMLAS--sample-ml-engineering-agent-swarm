@@ -523,6 +523,8 @@ Inherits [../AGENTS.md](../AGENTS.md); this document owns the files directly in 
 
 - Warm closure fixtures snapshot immutable SDK history only after the actual initial process_message coroutine returns. Source AfterToolCall capture counts and model stream-start counts do not prove the installed SDK turn is settled. Preserve all original identities, Create counts, history equality, current-policy closure, exact worker cleanup and existing 30s bounds; use a passive threading.Event at the real return boundary, never arbitrary sleeps.
 
+- [Added 2026-11-16] `case_prep_continuation_fixtures.start_original_target` returns only after the source's first read of the target original (`target.actual_observed`). The stream stand-ins count a call when their stream starts and the SDK appends that call's answer afterwards, so a call count does not prove the answer is in the history. `test_original_target_settled_boundary.py` holds the fourth answer behind an event and requires the fixture to wait for it. `test_normal_research_profile.py` waits for the first read of the original MODEL (a passive `threading.Event` on the native describe) before it reads the pending original or copies history: the Create record and the stream start are both earlier than the capture hook and the tool-result message. `test_runtime_pair_original_capture.py` and the DATA-then-MODEL case of `test_sdk_pending_handoff.py` wait until the source has retained the original before they read it: the connected fixture's result recorder and a tool's own read of its submission both run before the source's after-tool hook. Keep every existing 5s bound and assertion; a new continuation test that copies history for an equality check waits for a source read boundary first.
+
 - Warm multi-producer regressions require genuine registered SDK target submission,
   exact private original/native identity and current policy, then actual owning
   artifacts before same-Agent append-only continuation. Preserve independent live
@@ -866,7 +868,7 @@ Inherits [../AGENTS.md](../AGENTS.md); this document owns the files directly in 
   raw reads and enforce common deadlines before/after HEAD. Post-Create decode
   faults retain original opaque handles across repeated catalog prompts; resource
   probe errors refuse while all four provider paths and fixed endpoint probes remain.
-- Owned files: `test_version_single_source.py`, `test_qwen_sft_durable_submission.py`, `test_campaign_state.py`, `runtime_image_acceptance.py`, `test_astra_safeguards.py`, `test_baseline_train_flow.py`, `test_cli_persisted_discovery.py`, `test_client_deployment_namespace.py`, `test_cloudtrail_capacity_preflight.py`, `test_deployment_manifest_cleanup.py`, `test_github_workflow_contract.py`, `test_infra_deployment_namespace.py`, `test_managed_job_ownership.py`, `test_manifest_cli_credential_chain.py`, `test_pipeline_dag_compilation.py`, `test_prepare_host.py`, `test_region_client_metadata.py`, `test_repository_governance.py`, `test_repository_policy.py`, `test_research_public_fallback.py`, `test_runtime_binding_completeness.py`, `test_runtime_default_endpoint.py`, `test_runtime_deployment_advisory.py`, `test_runtime_ownership_controller.py`, `test_runtime_role_lifecycle_advisory.py`, `test_runtime_role_portability.py`, `test_setup_deployment_namespace.py`, `test_setup_owned_publication.py`, `test_setup_reuse_witness.py`, `test_shell_entrypoint_advisory.py`, `test_tavily_setup_choice.py`, `model_acquisition_fixtures.py`, `test_model_weight_acquisition_core.py`, `test_managed_model_weight_acquisition.py`, `test_model_weight_acquisition_binding.py`.
+- Owned files: `test_image_version_file.py`, `test_version_single_source.py`, `test_qwen_sft_durable_submission.py`, `test_campaign_state.py`, `runtime_image_acceptance.py`, `test_astra_safeguards.py`, `test_baseline_train_flow.py`, `test_cli_persisted_discovery.py`, `test_client_deployment_namespace.py`, `test_cloudtrail_capacity_preflight.py`, `test_deployment_manifest_cleanup.py`, `test_github_workflow_contract.py`, `test_infra_deployment_namespace.py`, `test_managed_job_ownership.py`, `test_manifest_cli_credential_chain.py`, `test_pipeline_dag_compilation.py`, `test_prepare_host.py`, `test_region_client_metadata.py`, `test_repository_governance.py`, `test_repository_policy.py`, `test_research_public_fallback.py`, `test_runtime_binding_completeness.py`, `test_runtime_default_endpoint.py`, `test_runtime_deployment_advisory.py`, `test_runtime_ownership_controller.py`, `test_runtime_role_lifecycle_advisory.py`, `test_runtime_role_portability.py`, `test_setup_deployment_namespace.py`, `test_setup_owned_publication.py`, `test_setup_reuse_witness.py`, `test_shell_entrypoint_advisory.py`, `test_tavily_setup_choice.py`, `model_acquisition_fixtures.py`, `test_model_weight_acquisition_core.py`, `test_managed_model_weight_acquisition.py`, `test_model_weight_acquisition_binding.py`.
 
 - Model normal-integration tests use the installed SDK with closed providers
   to prove startup0SDK/SSM, managed-only port selection, pure catalog discovery,
@@ -1365,9 +1367,13 @@ validate/save/private planning bind and legacy tabular contracts remain intact.
 - `tests/test_changelog_shape.py` reads root `CHANGELOG.md`, root `AGENTS.md` and `CONTRIBUTING.md`.
   It requires the linked introduction that names `VERSION` and `## [Unreleased]` first.
   It requires release headings of the form `## [N.NN] - YYYY-MM-DD` with strictly decreasing versions
-  and dates that never increase. It requires allowed groups, bullet format and content rules.
+  and dates that never increase. Versions compare as the pair of `N` and `NN` read as integers. Each release
+  follows the one below it by one counter step or starts a new release line at `00`.
+  It requires allowed groups, bullet format and content rules.
   Both rule files must require one Unreleased line for every user- or maintainer-visible change in the same
-  change and the `VERSION` step at release. Drifted heading lists fed to its helper must be reported.
+  change and the `VERSION` step at release. Both must state when `N` rises and that a publication without
+  a visible change keeps its `VERSION` and gets no new heading. The contributor guide must name `uv.lock`
+  in the release change. Drifted heading lists fed to its helper must be reported.
   It checks shape and rule text. It does not check whether bullets are true or every change has a bullet.
 
 - `tests/test_version_single_source.py` reads root `VERSION`, `pyproject.toml`, `uv.lock`, `CHANGELOG.md`
@@ -1379,6 +1385,15 @@ validate/save/private planning bind and legacy tabular contracts remain intact.
   `amlas info version --json` and `amlas.__version__` to report the mapped version from a checkout.
   Its helpers are also fed drifted inputs and must report each one. It does not build or install the package.
   Wheel and source-distribution metadata remain a release build check.
+
+- `tests/test_image_version_file.py` reads the root `Dockerfile*` recipes, root `VERSION` and
+  `src/amlas/_version.py`. It requires the recipes whose final stage copies the whole `amlas` package to be
+  the listed ones. It requires each of them to copy root `VERSION` from the build context to the parent of
+  the copied `src` directory, and no ignore file to leave `VERSION` out of the build context.
+  It lays the package and `VERSION` out as each recipe copies them and requires the real reader to return
+  the mapped version. Its helpers are also fed changed recipes, including each real recipe without its
+  `VERSION` line, and must report each one. It builds no image. The version a built image prints remains
+  an image build check.
 - `test_qwen_cpu_case_file_provisioning.py` (added 2026-11-15): Contains 30 offline tests with no skip. Helper tests use stand-in files and parameterized pins through a local file address or a loopback HTTP server. They check read-only writes, hash and size failures, missing sources, HTTP 404, disallowed redirects, temporary 503 retries, the one-byte read bound, and default HTTPS requests. They check verified-file reuse without fetching, differing named-file refusal without requests or writes, and preservation of existing destinations. Parsed constants must equal SOURCE_REPO, SOURCE_REVISION, SOURCE_FILENAME, SOURCE_SHA256, SOURCE_BYTES. The address must be the public resolve address of that revision. Incomplete, duplicate, computed or misshapen constants refuse. Script tests copy the real script and helper into a temporary project with stand-in constants, metadata and `uv`. They check four exact `environment.sh` lines, export placement, sourced values, and failure without `environment.sh`. One test requires `AMLAS_TEST_HUMANEVAL_PARQUET` to name the provisioned file and checks product pins; absence fails. These tests make no public-source request. The real fetch is proven only by a script run with network.
 
 ## Work Guidance

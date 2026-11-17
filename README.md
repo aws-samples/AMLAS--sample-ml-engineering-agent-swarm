@@ -3,7 +3,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11--3.12-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT-0](https://img.shields.io/badge/license-MIT--0-green.svg)](LICENSE)
 [![Architecture](https://img.shields.io/badge/architecture-ports_%26_adapters-informational.svg)](#️-architecture--the-two-planes--the-seam)
-[![CI](https://github.com/aws-samples/sample-ml-engineering-agent-swarm/actions/workflows/public-release.yml/badge.svg)](https://github.com/aws-samples/sample-ml-engineering-agent-swarm/actions/workflows/public-release.yml)
+[![CI](https://github.com/aws-samples/AMLAS--sample-ml-engineering-agent-swarm/actions/workflows/public-release.yml/badge.svg)](https://github.com/aws-samples/AMLAS--sample-ml-engineering-agent-swarm/actions/workflows/public-release.yml)
 [![AWS](https://img.shields.io/badge/platform-AWS-FF9900.svg)](#️-backend-selection--live-aws-setup)
 [![Strands Agents](https://img.shields.io/badge/agents-Strands_Agents-6F42C1.svg)](https://github.com/strands-agents/sdk-python)
 
@@ -274,8 +274,8 @@ image build. Read-only preflight does not need Docker. See
 > installations retain their normal PyTorch source; uv rejects selecting both variants together.
 
 ```bash
-git clone https://github.com/aws-samples/sample-ml-engineering-agent-swarm.git
-cd sample-ml-engineering-agent-swarm
+git clone https://github.com/aws-samples/AMLAS--sample-ml-engineering-agent-swarm.git
+cd AMLAS--sample-ml-engineering-agent-swarm
 scripts/setup.sh
 ```
 
@@ -766,7 +766,7 @@ account equals the configured account.
 ## 📁 Project layout
 
 ```
-sample-ml-engineering-agent-swarm/     # repo root (distribution: agentic-ml-lifecycle-automation-surface)
+AMLAS--sample-ml-engineering-agent-swarm/     # repo root (distribution: agentic-ml-lifecycle-automation-surface)
 ├── pyproject.toml                 # build, dependencies, and console scripts
 ├── LICENSE  NOTICE                # MIT-0 + attribution
 ├── .agenticml.yaml.example        # project memory

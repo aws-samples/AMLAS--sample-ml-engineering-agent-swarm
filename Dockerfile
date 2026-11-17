@@ -26,6 +26,7 @@ WORKDIR /app
 RUN chown 10001:10001 /app
 COPY --chown=10001:10001 --from=dependencies /app/.venv /app/.venv
 COPY --chown=10001:10001 src/ ./src/
+COPY --chown=10001:10001 VERSION ./VERSION
 COPY --chown=10001:10001 prompts/ ./prompts/
 ENV PATH="/app/.venv/bin:${PATH}"
 ENV PYTHONPATH=/app/src
