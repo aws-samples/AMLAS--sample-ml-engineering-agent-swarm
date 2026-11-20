@@ -19,12 +19,14 @@ import json
 import logging
 import os
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from importlib.metadata import version
 from types import SimpleNamespace
 
 import pytest
 from strands import Agent, tool
+from strands.event_loop import streaming
 from strands.handlers.callback_handler import PrintingCallbackHandler, null_callback_handler
 from strands.models import Model
 from test_normal_checkpoint_cas_contract import _policy
@@ -58,6 +60,19 @@ SENTENCES = (BEFORE, BETWEEN, FINAL)
 PER_RUN_KEYS = {"run_id", "check_id", "keyed_digest", "opaque_cycle"}
 RUNTIME_STARTUP_LINE = "TAVILY_SECRET: configured=False newly_applied=False\n"
 USAGE = {"usage": {"inputTokens": 0, "outputTokens": 0, "totalTokens": 0}, "metrics": {"latencyMs": 0}}
+
+
+@pytest.fixture(autouse=True)
+def scripted_model_has_no_measured_first_byte_time(monkeypatch):
+    """Keep the metadata of every assistant message as the scripted model wrote it.
+
+    The SDK reads the wall clock at the first stream event and adds `timeToFirstByteMs` to the message's
+    metadata once the time since the model call reaches 1 ms. The scripted model answers at once, so the field
+    appeared only when the test process was held up. Two runs of the same script then differed in their
+    messages and in the sizes the product logs. The SDK's clock reading in its stream module is zero here,
+    and the SDK then adds no such field.
+    """
+    monkeypatch.setattr(streaming, "time", SimpleNamespace(time=lambda: 0.0))
 
 
 class NarratingModel(Model):
@@ -549,3 +564,23 @@ def test_guard_sdk_contract_the_rule_relies_on(record_property, capsys):
     default.callback_handler = lambda **event: events.append(sorted(event))
     default("ordinary console question")
     assert events and capsys.readouterr().out == ""
+
+
+def test_guard_slow_first_stream_event_leaves_the_scripted_metadata_unchanged(monkeypatch, current_context):
+    scripted_stream = NarratingModel.stream
+
+    async def slow_first_event(self, messages, tool_specs=None, system_prompt=None, **kwargs):
+        # Longer than the 1 ms from which the SDK records a measured time to the first stream event.
+        time.sleep(0.005)
+        async for event in scripted_stream(self, messages, tool_specs, system_prompt, **kwargs):
+            yield event
+
+    monkeypatch.setattr(NarratingModel, "stream", slow_first_event)
+    w = work(monkeypatch)
+    agent = SDK_BUILD(w.backend)
+    invoke(agent)
+    answers = [message for message in agent.messages if message["role"] == "assistant"]
+    assert len(answers) == w.model.calls == 3
+    assert [message["metadata"] for message in answers] == [USAGE] * 3, (
+        "the SDK changed the scripted metadata; the run comparisons of this file need equal metadata in both runs"
+    )

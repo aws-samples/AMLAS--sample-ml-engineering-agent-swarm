@@ -67,7 +67,11 @@ class Native:
 def native(monkeypatch):
     import test_managed_coding_preparation as io_fixture
 
+    # These modules copy SOURCE_SHA256 when they are first imported. Load them before the change
+    # below: a first import during this test would keep the changed value for later tests.
+    import amlas.arbiter.coding
     import amlas.data_eng.coding_case_profile as profile
+    import amlas.evaluation.coding_pair  # noqa: F401
 
     # Preserve strict ownership assertions while selecting this fixture account.
     monkeypatch.setattr(io_fixture, "ACCOUNT", ACCOUNT)

@@ -138,10 +138,14 @@ def test_normal_app_api_projects_only_closed_refusal_data_and_preserves_nominal_
             assert work.owned_app.get_async_task_info()["active_count"] == 1
             graph = backend._warm_graph()
             before = copy.deepcopy(agent.messages)
-            complete_fixture(monkeypatch, tmp_path, SimpleNamespace(handle=handle, adapter=work.adapter,
-                                                                   native=work.native))
-            if invalid_payload:
-                corrupt_one_raw_payload(work)
+            # The source reads the original every 10 ms on another thread and holds this lock for
+            # each whole read. Under it the completed fixture and the changed payload are one step
+            # for the source: no read can meet Completed with the unchanged payload.
+            with backend._warm_lock:
+                complete_fixture(monkeypatch, tmp_path, SimpleNamespace(handle=handle, adapter=work.adapter,
+                                                                       native=work.native))
+                if invalid_payload:
+                    corrupt_one_raw_payload(work)
             events = await asyncio.wait_for(reader, 5)
             response = events[-1]["response"]
             assert work.owned_app.get_async_task_info()["active_count"] == 0

@@ -20,6 +20,13 @@ RELEASE_HEADING = re.compile(r"^## \[(\d+)\.(\d{2,})\] - (\d{4}-\d{2}-\d{2})$")
 RELEASE_HEADING_FORM = "## [N.NN] - YYYY-MM-DD"
 BULLET = re.compile(r"^- [A-Z][^\n]*\.$")
 
+# The introduction's note on the release numbers that were assigned afterwards. It records what
+# those releases carried when they were published, so it stays word for word, as one paragraph.
+ASSIGNED_NUMBERS_NOTE = (
+    "The numbers `0.01` to `0.05` were assigned afterwards. Releases `0.01` to `0.05` and the first "
+    "publication of `0.06` carried the package version `0.1.0`."
+)
+
 # Text a bullet must not carry. Path and host fragments are assembled so that this
 # file holds no literal of the kind it rejects.
 _SEP = "/"
@@ -122,6 +129,24 @@ def release_heading_problems(headings: list[str]) -> list[str]:
     return problems
 
 
+def _introduction() -> list[str]:
+    """Return the paragraphs between the title and the first level-two section."""
+    lines = _lines()
+    first_section = next(index for index, line in enumerate(lines) if line.startswith("## "))
+    return [line for line in lines[1:first_section] if line]
+
+
+def assigned_numbers_note_problems(introduction: list[str]) -> list[str]:
+    """Return what is wrong with the note on the numbers assigned afterwards, given the introduction."""
+    if introduction.count(ASSIGNED_NUMBERS_NOTE) == 1:
+        return []
+    if ASSIGNED_NUMBERS_NOTE in introduction:
+        return ["the note on the release numbers assigned afterwards appears more than once"]
+    return [
+        "the introduction must keep this paragraph word for word, as one paragraph: " + ASSIGNED_NUMBERS_NOTE
+    ]
+
+
 def test_title_and_introduction() -> None:
     lines = _lines()
     assert lines[0] == TITLE
@@ -133,6 +158,29 @@ def test_title_and_introduction() -> None:
     for line in introduction:
         assert not line.startswith(("#", "-", " ")), f"introduction is plain sentences only: {line!r}"
     assert len(introduction) <= 3
+
+
+def test_introduction_keeps_the_note_on_the_numbers_assigned_afterwards() -> None:
+    assert assigned_numbers_note_problems(_introduction()) == []
+
+
+@pytest.mark.parametrize(
+    "paragraphs",
+    [
+        [],
+        ["Each release has a version `N.NN` held in the root `VERSION` file."],
+        [
+            "The numbers `0.01` to `0.05` were assigned afterwards, and those releases carried the package "
+            "version `0.1.0`."
+        ],
+        [ASSIGNED_NUMBERS_NOTE.replace("and the first publication of `0.06` ", "")],
+        ["The numbers `0.01` to `0.05` were assigned afterwards.", ASSIGNED_NUMBERS_NOTE.split(". ", 1)[1]],
+        [ASSIGNED_NUMBERS_NOTE + " Later releases carry their own number."],
+        [ASSIGNED_NUMBERS_NOTE, ASSIGNED_NUMBERS_NOTE],
+    ],
+)
+def test_changed_missing_or_repeated_note_is_reported(paragraphs: list[str]) -> None:
+    assert assigned_numbers_note_problems(paragraphs) != []
 
 
 def test_unreleased_is_first_and_releases_are_versioned_newest_first() -> None:

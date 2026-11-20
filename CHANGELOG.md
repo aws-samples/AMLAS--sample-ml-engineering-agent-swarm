@@ -8,6 +8,22 @@ The numbers `0.01` to `0.05` were assigned afterwards. Releases `0.01` to `0.05`
 
 ## [Unreleased]
 
+## [0.08] - 2026-11-20
+
+### Added
+
+- Added a requirement in `tests/test_changelog_shape.py` for the introduction of `CHANGELOG.md` to keep its note on release numbers assigned afterwards word for word, exactly once, and as one paragraph.
+
+### Fixed
+
+- Fixed possible timing-dependent failures of `tests/test_case_unknown_observation_budget.py` and `tests/test_normal_research_profile.py` by taking the read counts, setting the native state and replacing `adapter.artifacts` under the backend's `_warm_lock`, and by changing the policy or guard version before completing the fixture.
+- Fixed timing-dependent failures of `tests/test_normal_run_console_silent.py`, in which a busy machine let the SDK add a measured `timeToFirstByteMs` to the messages of one of two compared runs, by setting the clock reading in `strands.event_loop.streaming` to zero for the scripted model through the fixture `scripted_model_has_no_measured_first_byte_time` and by adding a test with a slow first stream event that requires unchanged message metadata.
+- Fixed timing-dependent failures in `tests/test_case_unknown_observation_budget.py`, `tests/test_model_unknown_observation_budget.py` and `tests/test_runtime_ambiguous_model_capture.py` by replacing the fixed pause after the eighth failed or unknown read with a wait for `work.api_returned` under the existing 5 s bound.
+- Fixed a timing-dependent failure of the invalid-payload case in `tests/test_warm_model_refusal_diagnostics.py` by completing the fixture and changing the stored payload under the backend's `_warm_lock`.
+- Fixed a timing-dependent failure in `tests/test_warm_model_closure.py` by wrapping the store's `_submission_lock` in `TurnTakingLock` so the second same-catalog call waited for the first to release the lock before taking the real lock.
+- Fixed timing-dependent failures in `tests/test_sdk_record_form.py` and `tests/test_normal_completion_sdk_none_probe.py`, in which a busy machine let the SDK add a measured `timeToFirstByteMs` to scripted messages, by giving both files the fixture `scripted_model_has_no_measured_first_byte_time` that `tests/test_normal_run_console_silent.py` uses.
+- Fixed an order-dependent failure of tests that build a coding report after a test that used the `native` fixture of `tests/test_coding_case_native.py` in the same process, by loading `amlas.arbiter.coding` and `amlas.evaluation.coding_pair` in that fixture before it changes the case profile's source hash.
+
 ## [0.07] - 2026-11-16
 
 ### Changed

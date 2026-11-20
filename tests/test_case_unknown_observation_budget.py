@@ -60,19 +60,25 @@ def test_persistent_original_case_failure_returns_finite_unresolved_without_repl
             pending = capture_original(backend, work, reference, record)
             before = copy.deepcopy(work.agents[0].messages)
             consumed = set(backend._warm_consumed)
-            native_reads = len(work.target.observations)
-            s3_reads = len(work.target.s3.calls)
             failures = []
-            work.target.native.state = "Completed"
 
             def unavailable(original):
                 assert original is handle
                 failures.append(original.id)
                 raise failure("ordinary unavailable original case verification")
 
-            monkeypatch.setattr(work.target.adapter, "artifacts", unavailable)
+            # The source reads the original every 10 ms and holds this lock for each whole read.
+            # Under it the counts, the Completed state and the replaced verification are one step
+            # for the source: no read can follow the counts or meet Completed with the real verification.
+            with backend._warm_lock:
+                native_reads = len(work.target.observations)
+                s3_reads = len(work.target.s3.calls)
+                work.target.native.state = "Completed"
+                monkeypatch.setattr(work.target.adapter, "artifacts", unavailable)
             await wait_until(lambda: len(failures) >= 8, reader, "eight qualified failures missing")
-            await asyncio.sleep(0.03)
+            # The API returns on the worker's thread after the eighth failure. Wait for that
+            # return under the 5 s bound; a fixed pause can end before a held-up worker returns.
+            await wait_until(work.api_returned.is_set, reader, "CASE failure wait did not close")
             assert work.api_returned.is_set(), (
                 "CASE failure wait did not close after eight qualified observations"
             )

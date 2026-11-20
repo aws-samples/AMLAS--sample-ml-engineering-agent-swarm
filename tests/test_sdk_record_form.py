@@ -26,6 +26,7 @@ from types import SimpleNamespace
 import pytest
 from sdk_scripted_model import ScriptedModel
 from strands import Agent, Snapshot, tool
+from strands.event_loop import streaming
 from strands.hooks.events import (
     AfterToolCallEvent,
     BeforeInvocationEvent,
@@ -45,6 +46,18 @@ from amlas.tui.chat.tool_binding_backend import ToolBindingBackend
 
 pytest_plugins = ("test_normal_run_checkpoint",)
 pytestmark = pytest.mark.usefixtures("inert_runtime_setup")
+
+
+@pytest.fixture(autouse=True)
+def scripted_model_has_no_measured_first_byte_time(monkeypatch):
+    """Keep the metadata of every assistant message as the scripted model wrote it.
+
+    The SDK adds a measured `timeToFirstByteMs` to a message once its first stream event comes 1 ms or more
+    after the model call, which happens only when the test process is held up. The SDK's clock reading in
+    its stream module is zero here, and the SDK then adds no such field.
+    """
+    monkeypatch.setattr(streaming, "time", SimpleNamespace(time=lambda: 0.0))
+
 
 SDK_VERSION = tuple(int(part) for part in version("strands-agents").split(".")[:2])
 MODEL_STATE_SINCE = (1, 43)  # first release whose session preset carries ``model_state``

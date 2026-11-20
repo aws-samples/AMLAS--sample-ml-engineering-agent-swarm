@@ -431,15 +431,17 @@ def test_normal_api_research_to_original_model_warm_completion_retains_checker_a
             assert pending is not None and pending.agent is selected.agents[0]
             before = copy.deepcopy(selected.agents[0].messages)
             checker = backend._input_checker
+            # The change comes first and the completion second, so no read of the source can meet
+            # the completed original under the unchanged policy or guard version.
+            if completion_change == "policy":
+                selected.policy.allowlist.append("changed-after-consumption")
+            elif completion_change == "guard":
+                monkeypatch.setenv("AMLAS_GUARDRAIL_VERSION", "1")
             complete_fixture(
                 monkeypatch,
                 tmp_path,
                 SimpleNamespace(handle=pending.record.handle, adapter=adapter, native=native),
             )
-            if completion_change == "policy":
-                selected.policy.allowlist.append("changed-after-consumption")
-            elif completion_change == "guard":
-                monkeypatch.setenv("AMLAS_GUARDRAIL_VERSION", "1")
             response = await asyncio.wait_for(task, 5)
             if completion_change is not None:
                 assert response.data["warm_model_continuation"]["disposition"] == "refused"

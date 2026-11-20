@@ -177,7 +177,11 @@ def test_actual_ambiguous_missing_native_job_holds_without_create_replay(monkeyp
             while len(work.observations) < 8:
                 assert asyncio.get_running_loop().time() < deadline
                 await asyncio.sleep(0.005)
-            await asyncio.sleep(0.03)
+            # The API returns on the worker's thread after the eighth poll. Wait for that return
+            # under the same 5 s bound; a fixed pause can end before a held-up worker returns.
+            while not work.api_returned.is_set() and not reader.done():
+                assert asyncio.get_running_loop().time() < deadline
+                await asyncio.sleep(0.005)
             assert work.api_returned.is_set(), "original UNKNOWN observation wait has no finite outcome"
             events = await asyncio.wait_for(reader, 5)
             assert events[-1]["response"]["data"]["warm_model_continuation"] == {

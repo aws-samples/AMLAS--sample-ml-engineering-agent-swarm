@@ -289,10 +289,37 @@ def test_mid_original_native_io_revocation_blocks_next_sdk_boundary(monkeypatch,
     assert step(work).disposition == "refused" and reads == before_reads
 
 
+class TurnTakingLock:
+    """The wrapped lock, taken in turns: an acquire waits until the earlier holder has released it."""
+
+    def __init__(self, lock):
+        self._lock = lock
+        self._turn = threading.Condition()
+        self._held = False
+
+    def acquire(self, blocking=True, timeout=-1):
+        with self._turn:
+            assert self._turn.wait_for(lambda: not self._held, 5), "earlier submission kept the lock"
+            self._held = self._lock.acquire(blocking, timeout)
+            return self._held
+
+    def release(self):
+        with self._turn:
+            self._lock.release()
+            self._held = False
+            self._turn.notify_all()
+
+
 def test_actual_sdk_two_same_catalog_results_close_without_last_capture_winning(monkeypatch):
     work = original_work(monkeypatch)
     pending = work.backend._warm_pending
     assert pending.reference == work.reference
+    # The SDK dispatches both calls of one message at once, and the store answers `busy` to a
+    # submission that meets its submission lock held. This test is about two accepted captures of
+    # one original, so the second call waits until the first has released the store's own lock.
+    # The `busy` answer to overlapping calls is not covered here.
+    store = work.backend._model_acquisition_store
+    monkeypatch.setattr(store, "_submission_lock", TurnTakingLock(store._submission_lock))
     bound_stream = work.model.stream
     captures = []
     work.agent.hooks.add_callback(
