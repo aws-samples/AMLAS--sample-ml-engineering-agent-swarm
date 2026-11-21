@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import hashlib
+import itertools
 import json
 import logging
 import os
@@ -24,7 +25,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from sdk_scripted_model import ScriptedModel
+from sdk_scripted_model import USAGE, ScriptedModel
 from strands import Agent, Snapshot, tool
 from strands.event_loop import streaming
 from strands.hooks.events import (
@@ -83,6 +84,8 @@ SFT_USE = "ordinary-use"
 SFT_INPUT = {"model_request_ref": "model_acq_" + "1" * 32, "preparation_request_ref": "prep_" + "2" * 32}
 PROMPT = "Declared scripted goal."
 FINAL_TEXT = "Declared final answer."
+FIRST_BYTE_MS = 125
+MEASURED = {"usage": USAGE["usage"], "metrics": {**USAGE["metrics"], "timeToFirstByteMs": FIRST_BYTE_MS}}
 GOLDEN = Path(__file__).with_name("sdk_record_form_golden.json")
 # sha256 of the canonical stored snapshot inside the golden TASK, as the earlier SDK release wrote it.
 GOLDEN_SNAPSHOT_SHA256 = (
@@ -777,3 +780,128 @@ def test_the_witness_on_the_observing_thread_reads_a_history_the_sdk_leaves_alon
     if SDK_VERSION >= TRACKING_ID_SINCE:
         assert all("tracking_id" in message for message in json.loads(seen.histories[0]))
     assert result.stop_reason == "end_turn" and model.calls == 2
+
+
+# ── A measured time to first byte is DATA of the record ──
+
+
+def every_model_call_measures_the_same_first_byte_time(monkeypatch):
+    """Make the SDK measure ``FIRST_BYTE_MS`` on every model call, however long the call takes.
+
+    The SDK reads its clock when a model call starts and again at the first content event of the stream,
+    and writes the difference to the message metadata as ``timeToFirstByteMs`` once it is 1 ms or more.
+    Here each reading of that clock is 0.125 s after the one before, a step that binary floats hold
+    exactly, so every run of one script carries the same value.
+    """
+    readings = itertools.count()
+    clock = SimpleNamespace(time=lambda: 1000.0 + next(readings) * FIRST_BYTE_MS / 1000)
+    monkeypatch.setattr(streaming, "time", clock)
+    try:  # newer strands-agents releases read the start of a model call in this module
+        from strands.models import _model_proxy
+    except ImportError:
+        return
+    monkeypatch.setattr(_model_proxy, "time", clock)
+
+
+def without_first_byte_time(messages):
+    """A copy of record-form messages without the measured field; this module's own statement."""
+    messages = copy.deepcopy(messages)
+    for message in messages:
+        message.get("metadata", {}).get("metrics", {}).pop("timeToFirstByteMs", None)
+    return messages
+
+
+def sized_conversation(monkeypatch, caplog):
+    """Two prompts through the product's agent build with a scripted model: the size lines and the histories."""
+    caplog.clear()
+    sent = []
+    with monkeypatch.context() as patch:
+        patch.setattr(checkpoint, "current_normal_run", lambda: SimpleNamespace(run_id=RUN_ID))
+        backend = ToolBindingBackend(Settings())
+        model = backend._model = ScriptedModel([("text", "first answer"), ("text", "second answer")])
+        agent = backend.build_agent()
+        assert agent.model is model, "the product build replaced the scripted model"
+        agent.callback_handler = lambda *args, **kwargs: None
+        agent.hooks.add_callback(
+            BeforeModelCallEvent, lambda event: sent.append(without_ids(copy.deepcopy(event.agent.messages)))
+        )
+        agent("first prompt")
+        agent("second prompt")
+    lines = [
+        entry.getMessage()
+        for entry in caplog.records
+        if entry.name == LOGGER and entry.getMessage().startswith("normal_conversation_size")
+    ]
+    parsed = [SIZE_LINE.fullmatch(line) for line in lines]
+    assert all(parsed) and [int(match.group(4)) for match in parsed] == [1, 3]
+    sizes = [int(match.group(3)) for match in parsed]
+    assert sizes == [len(canonical(messages).encode("utf-8")) for messages in sent]
+    return SimpleNamespace(
+        lines=lines,
+        sizes=sizes,
+        sent=sent,
+        history=without_ids(agent.messages),
+        witness=ToolBindingBackend._pause_history(agent.messages),
+    )
+
+
+def captured_turn(monkeypatch, label):
+    """One real SDK turn that calls the fine-tune tool: the live history at the capture and the stored record."""
+    context = run_context(label)
+    _agent, seen = sft_turn(monkeypatch, context)
+    assert seen.error is None, "the product capture refused a real SDK turn: " + repr(seen.error)
+    return SimpleNamespace(live=without_ids(seen.live), stored=captured_record(context, seen))
+
+
+def test_a_measured_first_byte_time_stays_in_the_record_counts_in_the_size_and_is_equal_in_two_runs(
+    request, monkeypatch, caplog
+):
+    caplog.set_level(logging.INFO, logger=LOGGER)
+    plain_talk = sized_conversation(monkeypatch, caplog)
+    with monkeypatch.context() as patch:
+        every_model_call_measures_the_same_first_byte_time(patch)
+        talks = [sized_conversation(monkeypatch, caplog) for _ in range(2)]
+    # The capture environment replaces the model of every agent the product builds, so it starts only here.
+    request.getfixturevalue("record_catalog")
+    plain_turn = captured_turn(monkeypatch, "a")
+    with monkeypatch.context() as patch:
+        every_model_call_measures_the_same_first_byte_time(patch)
+        turns = [captured_turn(monkeypatch, label) for label in "bc"]
+
+    field_bytes = len(canonical(MEASURED)) - len(canonical(USAGE))
+    assert field_bytes == len(f',"timeToFirstByteMs":{FIRST_BYTE_MS}')
+    plain_answers = [message["metadata"] for message in plain_talk.history if message["role"] == "assistant"]
+    assert plain_answers == [USAGE] * 2 and plain_turn.stored["data"]["messages"][1]["metadata"] == USAGE, (
+        "the clock fixture of this file is not in force"
+    )
+
+    # The stored record keeps the field with its value; nothing else differs from the record without it.
+    for turn in turns:
+        assert turn.live[1]["metadata"] == MEASURED, "TRIGGER ABSENT: the SDK added no measured time"
+        messages = turn.stored["data"]["messages"]
+        assert [message["role"] for message in messages] == ["user", "assistant"]
+        assert messages[1]["metadata"] == MEASURED, "the stored record lost or changed the measured time"
+        assert messages == turn.live
+        assert without_first_byte_time(messages) == plain_turn.stored["data"]["messages"]
+
+    # The logged size is the canonical size of the record form: each assistant message adds the field's bytes.
+    for talk in talks:
+        answers = [message["metadata"] for message in talk.history if message["role"] == "assistant"]
+        assert answers == [MEASURED] * 2, "TRIGGER ABSENT: the SDK added no measured time"
+        assistants = [sum(message["role"] == "assistant" for message in sent) for sent in talk.sent]
+        assert assistants == [0, 1]
+        assert talk.sizes == [
+            size + field_bytes * count for size, count in zip(plain_talk.sizes, assistants, strict=True)
+        ]
+        assert without_first_byte_time(talk.history) == plain_talk.history
+        assert f'"timeToFirstByteMs":{FIRST_BYTE_MS}' in talk.witness
+
+    # Two runs with the same measured time give equal records, size lines, histories and witness text.
+    assert blank_created_at(turns[0].stored) == blank_created_at(turns[1].stored), "two captures differ"
+    assert talks[0].lines == talks[1].lines and talks[0].sizes == talks[1].sizes
+    assert talks[0].history == talks[1].history and talks[0].witness == talks[1].witness
+
+    # The comparison a restore makes: the loaded history in record form against the stored prefix.
+    restored = Agent(model=ScriptedModel([]), tools=[scripted_sft], callback_handler=None)
+    restored.load_snapshot(Snapshot.from_dict(copy.deepcopy(turns[0].stored)))
+    assert binding._record_messages(restored.messages) == turns[0].stored["data"]["messages"]

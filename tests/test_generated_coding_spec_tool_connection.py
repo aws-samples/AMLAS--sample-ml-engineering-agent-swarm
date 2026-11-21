@@ -18,6 +18,19 @@ from amlas.tui.chat.agent_tools import get_safe_llm_tools, tool_display_name
 
 generation_state = _generation_fixture
 
+
+@pytest.fixture
+def spec_folder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """This test's own folder, set as the workspace so that `save_spec` may write there.
+
+    `save_spec` writes only below the configured workspace folders, the working directory or the system
+    temp folder. `tmp_path` lies in the system temp folder unless pytest's `--basetemp` names another
+    place; with the workspace set to it, the save path is valid in both cases.
+    """
+    monkeypatch.setenv("AMLAS_WORKSPACE_DIR", str(tmp_path))
+    return tmp_path
+
+
 DESCRIPTION = (
     "Fine-tune Qwen/Qwen3.5-9B as a coding model for Python code generation. "
     "The target is 'python_module'. Evaluate held-out pass@1 with the untouched "
@@ -138,12 +151,12 @@ class PlanningConnectionModel(Model):
 )
 def test_registered_generator_text_connects_validate_save_and_private_binder(
     generation_state,
-    tmp_path: Path,
+    spec_folder: Path,
     description,
 ):
     store, adapter, reads, _, _, _ = generation_state
     results = {}
-    model = PlanningConnectionModel(results, str(tmp_path / "generated.md"), description=description)
+    model = PlanningConnectionModel(results, str(spec_folder / "generated.md"), description=description)
     names = {"generate_spec_from_description", "validate_spec", "save_spec", "bind_coding_generation_spec"}
     registered = {tool_display_name(tool): tool for tool in get_safe_llm_tools()}
     assert names <= registered.keys()
@@ -179,7 +192,7 @@ def test_registered_generator_text_connects_validate_save_and_private_binder(
     assert list(results) == ["generated", "validated", "saved", "bound"]
     assert results["validated"]["valid"] is True
     assert results["saved"]["saved"] is True
-    assert (tmp_path / "generated.md").read_text() == generated["spec_text"]
+    assert (spec_folder / "generated.md").read_text() == generated["spec_text"]
     assert results["bound"]["success"] is True
     assert results["bound"]["native_admission"] is results["bound"]["quality_success"] is False
     parsed = load_spec_from_text(generated["spec_text"])
@@ -214,7 +227,7 @@ def test_registered_generator_text_connects_validate_save_and_private_binder(
 )
 def test_registered_generator_preserves_explicit_planning_data_without_magic_prose(
     generation_state,
-    tmp_path: Path,
+    spec_folder: Path,
     budget,
     unbounded,
 ):
@@ -228,7 +241,7 @@ def test_registered_generator_preserves_explicit_planning_data_without_magic_pro
         **({"unbounded_budget": True} if unbounded else {"compute_budget": budget}),
     }
     results = {}
-    model = PlanningConnectionModel(results, str(tmp_path / "finite.md"), planning_data)
+    model = PlanningConnectionModel(results, str(spec_folder / "finite.md"), planning_data)
     names = {"generate_spec_from_description", "validate_spec", "save_spec", "bind_coding_generation_spec"}
     registered = {tool_display_name(tool): tool for tool in get_safe_llm_tools()}
     agent = Agent(
@@ -284,7 +297,7 @@ def test_registered_generator_preserves_explicit_planning_data_without_magic_pro
 
 def test_registered_coding_generator_treats_s3_path_as_planning_data(
     generation_state,
-    tmp_path: Path,
+    spec_folder: Path,
     monkeypatch,
 ):
     import pandas as pd
@@ -306,7 +319,7 @@ def test_registered_coding_generator_treats_s3_path_as_planning_data(
     monkeypatch.setattr(pd, "read_csv", csv_parser)
     dataset = "s3://planning-fixture/coding-cases.json"
     results = {}
-    model = PlanningConnectionModel(results, str(tmp_path / "coding-path.md"), data_path=dataset)
+    model = PlanningConnectionModel(results, str(spec_folder / "coding-path.md"), data_path=dataset)
     names = {"generate_spec_from_description", "validate_spec", "save_spec", "bind_coding_generation_spec"}
     registered = {tool_display_name(tool): tool for tool in get_safe_llm_tools()}
     agent = Agent(

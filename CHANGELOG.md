@@ -8,6 +8,17 @@ The numbers `0.01` to `0.05` were assigned afterwards. Releases `0.01` to `0.05`
 
 ## [Unreleased]
 
+## [0.09] - 2026-11-20
+
+### Added
+
+- Added a test in `tests/test_normal_model_campaign_flow.py` for an overlapping model-weight submission to return `busy` without a second create.
+- Added a test in `tests/test_sdk_record_form.py` that gives scripted model calls a fixed measured `timeToFirstByteMs` and requires stored records to keep it, `normal_conversation_size` to count it, and two runs to give equal records.
+
+### Fixed
+
+- Fixed six test failures in `tests/test_generated_coding_spec_tool_connection.py` with `--basetemp` outside the system temp folder by using the fixture `spec_folder` to set `AMLAS_WORKSPACE_DIR` to the test's folder.
+
 ## [0.08] - 2026-11-20
 
 ### Added

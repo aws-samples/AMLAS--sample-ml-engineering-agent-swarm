@@ -1,5 +1,7 @@
 """Normal model tool routes through the original private campaign bridge."""
 
+import threading
+
 import pytest
 from test_model_campaign_bridge import bridge_fixture
 
@@ -41,6 +43,76 @@ def test_fresh_normal_store_repeat_is_read_only_same_reference(monkeypatch):
     assert first["job_name"] == second["job_name"]
     assert second["executed"] is False and second["reused"] is True
     assert len(x.native.requests) == 1
+
+
+def test_overlapping_submission_is_answered_busy_without_a_second_create(monkeypatch):
+    x = bridge_fixture(monkeypatch)
+    store = bound_store(x)
+    monkeypatch.setattr(flow, "_resolve_backend", lambda: pytest.fail("campaign reached legacy resolver"))
+    planned = flow.run_model_weight_acquisition_flow(
+        catalog_id="qwen3_5_9b", catalog_version="1", plan_only=True
+    )
+    create_taken, release = threading.Event(), threading.Event()
+    creates = []
+    bound_create = x.native.create_processing_job
+
+    def held_create(**kwargs):
+        # The stand-in has taken the request and holds back its answer, so the first
+        # submission stays inside the store's submission lock until the test releases it.
+        creates.append(kwargs["ProcessingJobName"])
+        answer = bound_create(**kwargs)
+        create_taken.set()
+        assert release.wait(10), "held first submission was never released"
+        return answer
+
+    monkeypatch.setattr(x.native, "create_processing_job", held_create)
+    results, failures = {}, []
+
+    def submit(name):
+        try:
+            results[name] = flow.run_model_weight_acquisition_flow(
+                catalog_id="qwen3_5_9b", catalog_version="1", policy=x.policy, store=store
+            )
+        except BaseException as error:
+            failures.append((name, error))
+
+    first = threading.Thread(target=submit, args=("first",))
+    second = threading.Thread(target=submit, args=("second",))
+    first.start()
+    try:
+        assert create_taken.wait(10), "first submission did not reach the native create"
+        assert store._submission_lock.locked()
+        second.start()
+        second.join(10)
+        assert not second.is_alive(), "second submission waited for the first instead of answering"
+        assert not failures
+        busy = results["second"]
+        assert busy["status"] == "busy" and busy["accepted"] is False
+        assert busy["decision"]["decision"] == "approved"
+        # Apart from its status and the approval, the answer equals a plan preview:
+        # no reference, no job and no effect.
+        assert busy == {**planned, "status": "busy", "decision": busy["decision"]}
+        assert len(creates) == 1 and len(x.native.requests) == 1
+        assert first.is_alive() and "first" not in results
+        assert store._submission_lock.locked()
+    finally:
+        release.set()
+        first.join(10)
+        if second.ident is not None:
+            second.join(10)
+    assert not first.is_alive() and not second.is_alive() and not failures
+    done = results["first"]
+    assert done["status"] == "submitted" and done["accepted"] is True and done["executed"] is True
+    assert done["job_name"] == creates[0]
+    assert store._records[done["request_ref"]].handle.id == done["job_name"]
+    assert len(creates) == 1 and len(x.native.requests) == 1
+    assert not store._submission_lock.locked()
+    later = flow.run_model_weight_acquisition_flow(
+        catalog_id="qwen3_5_9b", catalog_version="1", policy=x.policy, store=store
+    )
+    assert later["request_ref"] == done["request_ref"] and later["job_name"] == done["job_name"]
+    assert later["executed"] is False and later["reused"] is True
+    assert len(creates) == 1 and len(x.native.requests) == 1
 
 
 def test_normal_model_observe_requalifies_original_binding(monkeypatch):
