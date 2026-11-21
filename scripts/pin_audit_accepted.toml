@@ -1,0 +1,14 @@
+# Entries that scripts/audit_pin_sets.py accepts for a time. This file ships without entries.
+# One accepted entry is one table of this form:
+#
+# [[accepted]]
+# id = "<identifier or alias that the check tool reports>"
+# package = "<package name>"
+# pin_set = "<tool-pins | uv-lock-all | floors>"
+# reason = "<why the entry is accepted and what removes it>"
+# expires = "YYYY-MM-DD"
+#
+# An entry excuses a row only if its ID matches the row's ID or an alias of the row.
+# The package and pin set must also match the row.
+# An entry counts through its expiry date.
+# Expired entries, unmatched entries, missing fields, invalid dates, and unknown pin sets fail.

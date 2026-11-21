@@ -20,6 +20,7 @@ GITLAB_TRAINING_LOCK_AUDIT = (
     "uv run --frozen --no-sync pip-audit -r src/amlas/training/qwen_sft.requirements.lock "
     "--strict --disable-pip --vulnerability-service osv"
 )
+PIN_SET_CHECK = "uv run --frozen --no-sync python scripts/audit_pin_sets.py"
 
 
 def _verify_job():
@@ -104,6 +105,7 @@ def test_release_keeps_required_security_checks_and_read_only_permissions():
     assert "--no-deps" not in shlex.split(audit)
     for lock_audit in (GITLAB_CPU_LOCK_AUDIT, GITLAB_TRAINING_LOCK_AUDIT):
         assert run_commands.count(lock_audit) == 1, "each hashed lock keeps its own audit step"
+    assert run_commands.count(PIN_SET_CHECK) == 1, "the pin sets that no lock check reaches keep their own step"
     gitlab = yaml.safe_load((ROOT / ".gitlab-ci.yml").read_text())
     gitlab_audits = [line for line in gitlab["pip-audit"]["script"] if "pip-audit" in shlex.split(line)]
     assert len(gitlab_audits) == 3
@@ -114,6 +116,7 @@ def test_release_keeps_required_security_checks_and_read_only_permissions():
     assert "--no-deps" not in shlex.split(gitlab_export_audit)
     assert gitlab_cpu_lock_audit == GITLAB_CPU_LOCK_AUDIT
     assert gitlab_training_lock_audit == GITLAB_TRAINING_LOCK_AUDIT
+    assert gitlab["pip-audit"]["script"].count(PIN_SET_CHECK) == 1
     assert yaml.safe_load(WORKFLOW.read_text())["permissions"] == {"contents": "read"}
     assert not job.get("continue-on-error", False)
     assert all(not step.get("continue-on-error", False) for step in job["steps"])
@@ -163,6 +166,12 @@ def _script_line(command):
             id="training-lock-audit-loses-strict",
         ),
         pytest.param(_script_line(GITLAB_TRAINING_LOCK_AUDIT), "", id="training-lock-audit-removed"),
+        pytest.param(
+            _script_line(PIN_SET_CHECK),
+            _script_line(PIN_SET_CHECK.replace(" --frozen --no-sync", "")),
+            id="pin-set-check-loses-frozen-no-sync",
+        ),
+        pytest.param(_script_line(PIN_SET_CHECK), "", id="pin-set-check-removed"),
     ],
 )
 def test_each_gitlab_audit_line_is_checked_by_itself(original, mutated, tmp_path, monkeypatch):
@@ -203,6 +212,7 @@ def _step_line(command):
             id="training-lock-audit-loses-strict",
         ),
         pytest.param(_step_line(GITLAB_TRAINING_LOCK_AUDIT), "", id="training-lock-audit-removed"),
+        pytest.param(_step_line(PIN_SET_CHECK), "", id="pin-set-check-removed"),
     ],
 )
 def test_each_release_lock_audit_step_is_checked_by_itself(original, mutated, tmp_path, monkeypatch):

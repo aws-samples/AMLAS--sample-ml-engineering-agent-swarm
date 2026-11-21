@@ -3,7 +3,7 @@ default:
   before_script:
     - apt-get update
     - apt-get install -y --no-install-recommends git
-    - python -m pip install --no-cache-dir uv==0.8.8
+    - python -m pip install --no-cache-dir uv==0.13.4
     - export TMPDIR="$CI_PROJECT_DIR/../.ci-tmp-$CI_JOB_ID"
     - mkdir -p "$TMPDIR"
 
@@ -95,6 +95,7 @@ pip-audit:
     - uv run pip-audit --disable-pip -r "$TMPDIR/requirements.txt" --strict
     - uv run --frozen --no-sync pip-audit -r scripts/qwen_cpu_test.requirements.lock --strict --disable-pip --vulnerability-service osv
     - uv run --frozen --no-sync pip-audit -r src/amlas/training/qwen_sft.requirements.lock --strict --disable-pip --vulnerability-service osv
+    - uv run --frozen --no-sync python scripts/audit_pin_sets.py
 
 detect-secrets:
   stage: security

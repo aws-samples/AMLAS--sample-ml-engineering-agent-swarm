@@ -196,7 +196,9 @@ def build_agent(
         "description": description,
         # Only include ``messages`` when non-empty so the default single-turn
         # build stays byte-identical (``Agent()`` starts with an empty history).
-        "messages": list(messages) if messages else None,
+        # Each message goes to the SDK as a new dictionary, so fields the SDK adds stay off the caller's
+        # dictionaries. The copy is shallow: nested content blocks are still shared with the caller.
+        "messages": [dict(message) for message in messages] if messages else None,
     }
     if conversation_manager is not None:
         # Added only when named, so every default build keeps its exact kwarg set.

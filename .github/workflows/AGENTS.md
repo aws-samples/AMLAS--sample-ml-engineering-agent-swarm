@@ -17,6 +17,7 @@ Inherits [../AGENTS.md](../AGENTS.md); this document owns the files directly in 
   audits that exact pre-resolved lock without constructing a nested resolver environment.
 - The fine-tune image lock `src/amlas/training/qwen_sft.requirements.lock` is audited in its
   own step with the same strict hashed-requirements OSV command as the CPU test lock.
+- The `verify` job runs `uv run --frozen --no-sync python scripts/audit_pin_sets.py` once in its own step after the lock check steps. The step runs the dependency check against the live service.
 - Owned files: `public-release.yml`.
 - The independent `processing-bootstrap` job runs the digest-pinned Rust vendor
   image directly; it does not build or commit a Docker image. Preparation copies

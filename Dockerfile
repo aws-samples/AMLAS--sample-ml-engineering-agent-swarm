@@ -6,7 +6,7 @@
 FROM public.ecr.aws/docker/library/python:3.11-slim@sha256:db3ff2e1800a8581e2c48a27c3995339d47bdf046da21c7627accd3d51053a93 AS dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends gcc g++ && \
     apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
-RUN pip install --no-cache-dir uv==0.8.8
+RUN pip install --no-cache-dir uv==0.13.4
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
 # Cache-free installation keeps wheel archives out of the image. The retained

@@ -8,6 +8,26 @@ The numbers `0.01` to `0.05` were assigned afterwards. Releases `0.01` to `0.05`
 
 ## [Unreleased]
 
+## [0.10] - 2026-11-21
+
+### Added
+
+- Added coverage in `tests/test_bedrock_guardrail_stop_without_trace.py` and the new `tests/test_normal_run_held_final_state.py` for a guardrail stop on the model call that resumed a normal run, with and without a trace naming the blocked policy. The tests checked that the report stayed readable, status stayed `enrolled` with `resume_ready` false, and report, status, and resume requests started no work and wrote nothing, with or without resume memory.
+- Added `tests/test_input_admission_unencodable_text.py` to check full chat turns with tool text, tool JSON, history, or prompts that could not be encoded as UTF-8. With an input guardrail configured, the turn was held and neither the guardrail nor the model received that text. Without one, the turns completed with the text as given, and ordinary text was admitted with a guardrail configured.
+- Added `tests/test_caller_history_stays_unchanged.py` to check that chat turns left caller history dictionaries unchanged, that the builder gave the SDK an equal list for a supplied history and no messages for an empty or absent one, and that no agent build of an uninterrupted or restored normal run, or of a normal run that was resumed while its job still ran, received a history.
+- Added the subsection `Held runs and evaluation timeouts` to `README.md` to explain what a held run shows, how to start again, how text that cannot be encoded as UTF-8 is handled, and how `timeout` and `infrastructure_error` outcomes bound the pass counts of the paired coding evaluation.
+
+### Changed
+
+- Updated `src/amlas/evaluation/AGENTS.md` to explain that `coding_pair_runner.py` records `timeout` when a case has no verdict by its limit, including a remote call that does not return in time or an answer that runs too long, and that nothing is tried again.
+- Updated the `uv` tool version from 0.8.8 to 0.13.4 in `Dockerfile`, `.gitlab-ci.yml`, and `.github/workflows/public-release.yml`.
+- Raised the minimum versions in `pyproject.toml` to `strands-agents` 1.48.0, `python-dotenv` 1.2.2, `lightgbm` 4.6.0, `gitpython` 3.2.1, `pillow` 13.0.0, `pyasn1` 0.6.5, `python-multipart` 0.0.31, `setuptools` 84.1.0, `bedrock-agentcore-starter-toolkit` 0.1.13, `pyarrow` 23.0.1, and `pytest` 9.0.3. The versions in `uv.lock` did not change, and `tests/test_repository_policy.py` was updated to check the new `pytest` minimum.
+- Regenerated `uv.lock` with `uv` 0.13.4. The lock revision went from 3 to 5, environment markers were written in a shorter form, and four `greenlet` 3.4.0 wheel entries for s390x and riscv64 were dropped. No package version or source changed, and the lock kept all 208 package entries.
+
+### Fixed
+
+- Fixed `build_agent` in `src/amlas/_build.py` to pass a new dictionary per history message to the SDK, so that a caller's history dictionaries stay unchanged across chat turns. The copy is one level deep.
+
 ## [0.09] - 2026-11-20
 
 ### Added

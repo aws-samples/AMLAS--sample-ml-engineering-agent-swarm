@@ -54,6 +54,7 @@ You run this sample application locally or deploy it into your own AWS account. 
     - [3. Headless mode + Plan Mode + session resume (`capability`)](#3-headless-mode--plan-mode--session-resume-capability)
     - [4. Python API](#4-python-api)
     - [Spec file format](#spec-file-format)
+    - [Held runs and evaluation timeouts](#held-runs-and-evaluation-timeouts)
   - [☁️ Backend selection \& live-AWS setup](#️-backend-selection--live-aws-setup)
   - [🚀 Deploy the AWS infrastructure (one-click)](#-deploy-the-aws-infrastructure-one-click)
     - [Installation prerequisites and host preparation](#installation-prerequisites-and-host-preparation)
@@ -468,6 +469,14 @@ golden_dataset: data/ai4i/ai4i2020.csv
 threshold: 0.75                    # acceptance threshold
 baseline_score: 0.50               # score to beat
 ```
+
+### Held runs and evaluation timeouts
+
+**A guardrail stops a resumed run.** A run that waits for a job is resumed with one model call. When a guardrail stops that call, the run ends with a `run_completed` event of status `response_received`. The response action is `input_admission_held`. The message is `Model input was held at the admission boundary.` The admission status is `held`. These values apply on every `strands-agents` version that `pyproject.toml` allows when the guardrail returns a trace that names a blocked policy. They also apply when the guardrail returns no trace and the `strands-agents` version either matches `uv.lock` or is 1.54.0 or later. With an older version that `pyproject.toml` allows, from 1.48.0 up to but not including 1.54.0, a stop without a trace has the response action `guardrail_intervened` and a message that ends with the provider's text. The report stays readable through the runtime action `get_prompt_report`. It names the blocked policy when the guardrail returned a trace. `get_prompt_run_status` keeps reading `enrolled` with `resume_ready` false. `resume_prompt_run` finds nothing to continue. These follow-up requests start no work. Send the same prompt to start a new run. The new run starts from the beginning and repeats the work the held run had finished.
+
+**Text that cannot be encoded.** With an input guardrail configured, text that cannot be encoded as UTF-8, such as a lone surrogate character, is withheld from the guardrail and the model whether it appears in a tool result, earlier turns, or the prompt. The turn ends with `Model input was held at the admission boundary.`
+
+**Timeouts in the paired coding evaluation.** Each arm runs each case once. A case's 10-second limit starts when its remote session is accepted and covers every remote call of the case. A missing verdict at the limit gives `timeout`, including a slow answer or an unanswered remote call. Other remote execution failures give `infrastructure_error`. Nothing is retried. An unanswered call can only lower the pass count. `EVALUATION.json` gives `base_pass_count` and `tuned_pass_count`, and its `base_failure_counts` and `tuned_failure_counts` give each arm's `timeout` and `infrastructure_error` counts. `RECEIPTS.jsonl` gives one outcome per arm and case. An arm's repeatable pass count ranges from its reported count to that count plus its `timeout` and `infrastructure_error` outcomes. If the trailing arm has at least as many of those outcomes as the pass count gap, the lead is unsettled.
 
 ---
 

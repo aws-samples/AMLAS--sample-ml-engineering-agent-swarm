@@ -37,6 +37,7 @@ Inherits [../AGENTS.md](../AGENTS.md); this document owns the files directly in 
 
 - A single fully framed original native result with exact bounded nonzero integer exit status and bounded stdout/stderr strings raises only private `CandidateExecutionError`; the parent records `runtime_error` with oracle_completedFalse. It grants no oracle failure/pass or isolation claim. Missing/zero/malformed status, ambiguous isError and transport/protocol uncertainty remain infrastructure errors; raw output is never retained in diagnostics.
 - Cleanup may reconcile failed read-only Get observations on the same accepted session after one accepted Stop, under the unchanged30s/12poll budget. Every actual read has get-attempt then get-failed or get-observed; no Start/Stop replay or unknown-ID adoption. Closed optional typed SDK metadata includes only validated service code/HTTPstatus/requestID. Unknown allocation and unresolved cleanup remain unqualified; old records stay compatible.
+- `coding_pair_runner.py`: `timeout` covers cases with no verdict by the case limit, including a remote call that fails to return in time or an answer that runs too long. Nothing is tried again.
 
 ## Work Guidance
 

@@ -496,6 +496,7 @@ uv run --frozen --no-sync bandit -c pyproject.toml -r src scripts infra -lll
 uv export --frozen --format requirements-txt --no-emit-project > "$TMPDIR/requirements.txt"
 uv run --frozen --no-sync pip-audit --disable-pip -r "$TMPDIR/requirements.txt" --strict
 uv run --frozen --no-sync pip-audit -r src/amlas/training/qwen_sft.requirements.lock --strict --disable-pip --vulnerability-service osv
+uv run --frozen --no-sync python scripts/audit_pin_sets.py
 git ls-files -z | xargs -0 uv run --frozen --no-sync \
   detect-secrets-hook --baseline .secrets.baseline
 ```

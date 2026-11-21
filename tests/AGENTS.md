@@ -372,9 +372,11 @@ Inherits [../AGENTS.md](../AGENTS.md); this document owns the files directly in 
   These comparisons still fail when role, content, metadata, order or count differs.
   `normal_sft_cold_fixture.py` stays byte-identical because its checksum is pinned.
   Tests that read its `state.prefix` convert it at their own comparison line.
-  A caller's history list may gain `tracking_id` in place on strands-agents 1.65.0.
-  `test_input_admission_wiring.py` compares that list in record form.
-  These comparisons do not prove that caller message dicts stay unchanged.
+  The agent builder gives the SDK a new dictionary per message.
+  Caller history dictionaries stay as built on strands-agents 1.65.0 and 1.42.0.
+  `test_caller_history_stays_unchanged.py` requires this.
+  The copy is one level deep. Nested content blocks are outside the check.
+  `test_input_admission_wiring.py` still compares in record form.
 
 
 - Three `test_normal_completion_continuation.py` cases use the actual SDK and
@@ -495,6 +497,11 @@ Inherits [../AGENTS.md](../AGENTS.md); this document owns the files directly in 
   text) on the newer SDK and is reported as `guardrail_intervened` on 1.42.0. The expectations follow the
   installed SDK version; keep both branches while both versions are compared. Fixtures establish source
   behavior, not native guardrail classification or a deployed run.
+  Since 2026-11-21, the resumed-run scenario lives in the `resumed_run` helper.
+  A second test replays a stop whose trace names a blocked policy.
+  It requires a hold on every SDK version and a typed assessment in the report.
+  Both tests exclude provider text and redaction text from the report. Waits use `LIVENESS_WAIT_SECONDS` as the
+  upper bound.
 
 - `test_memory_hook_record_form.py` (added 2026-11-15): `MemoryHookProvider` with a recording client, on stubbed
   live messages in the Strands 1.65.0 shape and on a real SDK run with the scripted model. Every `create_event`
@@ -542,6 +549,32 @@ Inherits [../AGENTS.md](../AGENTS.md); this document owns the files directly in 
 - [Added 2026-11-20] `test_a_measured_first_byte_time_stays_in_the_record_counts_in_the_size_and_is_equal_in_two_runs` in `tests/test_sdk_record_form.py` proves that `timeToFirstByteMs` stays in the captured record with value 125. It checks the field in the live history at capture. It checks that `normal_conversation_size` matches the canonical record size. Each assistant message with the field adds 24 bytes. Two runs give equal records, size lines, histories and witness text. A real SDK agent that loads the stored record holds the stored messages in record form. The helper `every_model_call_measures_the_same_first_byte_time` replaces both SDK clocks with one clock. Each reading advances by exactly 0.125 seconds. Every model call measures 125 ms. The helper runs inside `monkeypatch.context()`. The zero-clock fixture resumes afterwards. The size conversations run before `record_catalog` is requested. That fixture replaces the model in every agent the product builds with its own stand-in. Future tests that need the field present must use the helper for every model call of every compared run.
 
 - [Added 2026-11-20] The registered tool `save_spec` checks the real path before writing. It writes below the configured workspace, data, output or specs folders, the working directory, or the system temp folder. Other paths get a saved false reply with error text. The model chooses the path. This rule keeps writes in the places set up for the project. Pytest puts `tmp_path` below `--basetemp`. Six tests of `tests/test_generated_coding_spec_tool_connection.py` failed when that folder was outside the system temp folder. The refused save stopped the scripted model before the bind step. The `spec_folder` fixture sets `AMLAS_WORKSPACE_DIR` to the test's own `tmp_path` and returns it. The three saving tests use that folder. Future tests that let a tool write a file must set their workspace folder or write below the working directory.
+
+- [Added 2026-11-21] `test_caller_history_stays_unchanged.py` reuses caller history across scripted chat turns.
+  Caller dictionaries must stay equal with and without a guard. Guard text must match across guarded turns.
+  The builder must give the SDK no messages for absent or empty history and an equal list for supplied history.
+  An uninterrupted run, a run restored after its fine-tune job finished, and a run resumed while its fine-tune
+  job still ran and restored after the job finished each require every SDK agent construction to receive no
+  messages and the one chat turn to carry no history. The resume request that arrives while the job still runs
+  must restore the run in a new engine, build its agent, and end with the waiting run's status of `InProgress`.
+  All three full-run cases need the full scripted fixture, which does not run on the strands-agents 1.42.0
+  comparison environment.
+  The dictionary checks cover one level only. Nested content blocks are outside the checks.
+
+- [Added 2026-11-21] `test_normal_run_held_final_state.py` uses the runtime entry and a durable run record.
+  It covers a resumed stop without a trace and a resumed stop with a blocked policy trace.
+  It requires the held response, the retained report, and the `enrolled` record.
+  It checks the report, status, and resume requests with and without resume memory.
+  These requests must start no work and write nothing.
+  The no-trace expectation follows the installed SDK. The fixture covers scripted runs only.
+  It proves nothing about a deployed run.
+
+- [Added 2026-11-21] `test_input_admission_unencodable_text.py` uses scripted chat turns.
+  It requires a hold for unencodable tool text, tool JSON, history text, or prompt text with a guard bound.
+  The guardrail and model must receive none of the unencodable text in those cases.
+  The turns must complete without a guard. Ordinary text must be admitted with a guard.
+  The guard-bound cases must fail if the checker's strict encode is made lenient.
+  The fixture covers chat turns only. It proves nothing about a real model endpoint.
 
 - [Added 2026-11-17] The `native` fixture of `tests/test_coding_case_native.py` changes `SOURCE_SHA256` and `SOURCE_BYTES` in `amlas.data_eng.coding_case_profile` for one test. `amlas.arbiter.coding` and `amlas.evaluation.coding_pair` copy `SOURCE_SHA256` when they are first imported. When that first import happened during a test that used the fixture, the module kept the changed hash for the rest of the process and refused a later coding report: `tests/test_case_unknown_observation_budget.py` or `tests/test_runtime_case_prep_continuation.py` followed by `tests/test_normal_late_resume_after_finished_run.py` failed in one process. The whole suite passed because other test modules import both modules at collection. The fixture now imports both modules before it changes the profile. The assertions and product are unchanged. A fixture that changes a module constant first imports the product modules that copy that constant at import.
 
@@ -696,6 +729,10 @@ Inherits [../AGENTS.md](../AGENTS.md); this document owns the files directly in 
   async task health, training or quality evidence.
 
 - `test_qwen_cpu_ci_provisioning.py` requires both real CI paths to provision the dedicated hashed CPU closure and exact five metadata pins before complete pytest, plus a strict CPU dependency audit. It retains corrupt-byte/destination refusal and CPU-only/no-CUDA checks; actual tokenizer/TinyQwen/PEFT cases remain required rather than skipped.
+
+- `test_audit_pin_sets.py` runs `scripts/audit_pin_sets.py` as a subprocess on a generated tree with an offline stand-in. It writes the stand-in as a `pip_audit` package in its temporary folder and puts that folder on `PYTHONPATH` for the script. It requires the script to refuse `--pip-audit` with a usage error and exit code 2 before running anything. It requires every tool start to use the test's interpreter, `-m`, `pip_audit`, the fixed options, and the requirements and report files for that round in the script's own temporary directory. It checks all three sets and their fixed options. It covers clean reports, unaccepted rows, ID and alias matches, inclusive expiry, and rejection of expired, unmatched, incomplete, or wrong-scope entries. It covers tool version mismatches and three tool errors. It sets `TMPDIR` for the script's process to a temporary directory below the test's own temporary folder, so the test file also passes where the system temp folder is absent or read-only. It requires exit code 1 when the tool writes a complete report with no rows and exits with a code other than 0 or 1, a report leaves out a pin, the tool reports a pin as skipped, a tool file names no version or is absent, or a requirement has no lowest version. A single-set run leaves other sets' entries alone. It checks the shipped file's empty state and format and the repository's shared uv version. It runs without skips.
+
+- `test_github_workflow_contract.py` requires `uv run --frozen --no-sync python scripts/audit_pin_sets.py` exactly once in the GitLab `pip-audit` job script. It requires the same line exactly once as a step in the GitHub `verify` job.
 
 - Governance regressions distinguish exact reviewed public model commits from
   numeric fragments, altered tokens and separately retained private identifiers.

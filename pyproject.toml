@@ -1,6 +1,6 @@
 [project]
 name = "agentic-ml-lifecycle-automation-surface"
-version = "0.9.0"
+version = "0.10.0"
 description = "Agentic ML Lifecycle Automation Surface — an AWS-native, terminal-first conversational agent that drives the full ML lifecycle (stages 0-12) behind a backend-portable ports-and-adapters seam."
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
@@ -48,10 +48,10 @@ dependencies = [
     # `pip install amlas` produced BOTH broken entry points: `amlas` (CLI) and
     # `amlas-ui` (TUI) each raised ModuleNotFoundError at import. Declaring it here
     # states the real runtime contract.
-    "strands-agents>=1.1",
+    "strands-agents>=1.48.0",
     "pydantic>=2.7",
     "pyyaml>=6.0",
-    "python-dotenv>=1.0",
+    "python-dotenv>=1.2.2",
     # SEC-16 / R-013: harden XML parsing of remote Atom responses (arXiv) against
     # XXE/entity-expansion classes and clear bandit B314; used by tools/research/arxiv.py.
     "defusedxml>=0.7.1",
@@ -61,7 +61,7 @@ dependencies = [
     "scikit-learn>=1.5",
     "scipy>=1.13",
     "xgboost>=2.1",
-    "lightgbm>=4.0",
+    "lightgbm>=4.6.0",
     "httpx>=0.27",
     "optuna>=3.6",
     "click>=8.0",
@@ -72,7 +72,7 @@ dependencies = [
     # published vulnerability advisories.
     "cryptography>=50.0.0",
     "anyio>=4.14.2",  # TLS/process-pool fixes (GHSA-82r6-8w77-94w6, GHSA-5p39-cfhj-2xmp)
-    "gitpython>=3.1.62",  # Includes Git directory/diff/author fixes and GHSA-59cr-6r3x-644w
+    "gitpython>=3.2.1",  # Includes Git directory/diff/author fixes and GHSA-59cr-6r3x-644w
     "idna>=3.15",
     "mako>=1.4.2",
     # >=1.27.2: CVE-2026-52869 (HTTP transports serve session requests without
@@ -85,18 +85,20 @@ dependencies = [
     # >=12.3.0: 10 advisories — CVE-2026-59197 / -59205 (native heap OOB write and
     # ImageCms heap corruption) plus 8 DoS paths (CVE-2026-54058/-54059/-54060,
     # -55379, -55380, -59199, -59200, -59204). Transitive via matplotlib/torchvision.
-    "pillow>=12.3.0",
+    # >=13.0.0: the lowest version the dependency check accepts.
+    "pillow>=13.0.0",
     # >=0.6.4: CVE-2026-59885 / -59886 — DoS via crafted ASN.1 OBJECT IDENTIFIER and
     # REAL values. Transitive via pyasn1-modules.
-    "pyasn1>=0.6.4",
+    # >=0.6.5: the lowest version the dependency check accepts.
+    "pyasn1>=0.6.5",
     # >=2.14.2: GHSA-4xgf-cpjx-pc3j. Transitive via mcp (strands-agents) and
     # openapi-spec-validator (bedrock-agentcore-starter-toolkit); pinned here as a
     # direct floor because neither parent has raised its own constraint yet.
     "pydantic-settings>=2.14.2",
     "pyjwt>=2.15.1",
-    "python-multipart>=0.0.30",
+    "python-multipart>=0.0.31",
     "starlette>=1.3.1",
-    "setuptools>=83.0.0",
+    "setuptools>=84.1.0",
     "urllib3>=2.8.0",
     # Estimator artifacts use Skops' inspect-before-load format;
     # executable pickle persistence is prohibited in shipped source.
@@ -115,14 +117,14 @@ agents = [
     # 0.x bumps for these fast-moving APIs (PLAN §18 flags their instability).
     #
     # NOTE: ``strands-agents`` MOVED to [project.dependencies] — it is a base
-    # requirement, not optional (see the comment there). The ``>=1.1`` floor is
-    # unchanged and its rationale travels with it: the old ``<1.0`` cap pinned
+    # requirement, not optional (see the comment there). Its minimum version is
+    # stated there and the rationale travels with it: the old ``<1.0`` cap pinned
     # 0.3.0, whose ``Agent.__init__`` had already dropped ``tool_executor`` (the
     # live TUI/swarm crash) and which sat BELOW the floor ``bedrock-agentcore``
     # itself requires. ``_filter_agent_kwargs`` keeps the build robust to further
     # ``Agent.__init__`` signature drift across 1.x.
     "bedrock-agentcore>=1.18.1",
-    "bedrock-agentcore-starter-toolkit>=0.1",
+    "bedrock-agentcore-starter-toolkit>=0.1.13",
     "boto3>=1.35",
     # T-HARN-14: the AgentCore harness operations (CreateHarness / UpdateHarness /
     # InvokeHarness) first appear in botocore 1.43.0. The floor states the real
@@ -151,7 +153,7 @@ data = [
     # (lake tools dispatch ``.parquet`` → pandas read_parquet/to_parquet). Lives in the
     # ``data`` extra (not core) so a default install stays light; the lake Parquet path
     # supports the lake Parquet read/write path.
-    "pyarrow>=16.0",
+    "pyarrow>=23.0.1",
 ]
 
 # Managed runtime variant: same data APIs, exact current framework version,
@@ -164,10 +166,10 @@ runtime-cpu = [
     "statsmodels>=0.14",
     "pandera>=0.20",
     "torch==2.14.0",
-    "pyarrow>=16.0",
+    "pyarrow>=23.0.1",
 ]
 dev = [
-    "pytest>=8.4.2",
+    "pytest>=9.0.3",
     "ruff>=0.6",
 ]
 

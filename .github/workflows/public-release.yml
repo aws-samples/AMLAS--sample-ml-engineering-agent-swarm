@@ -64,7 +64,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: "22"
-      - run: python -m pip install --no-cache-dir uv==0.8.8
+      - run: python -m pip install --no-cache-dir uv==0.13.4
       - run: uv sync --frozen --extra dev --extra security --extra cdk --extra agents --extra runtime-cpu
       - name: Provision real Qwen CPU test prerequisites
         run: |
@@ -79,6 +79,7 @@ jobs:
       - run: uv run --frozen --no-sync pip-audit --disable-pip -r "${RUNNER_TEMP}/requirements.txt" --strict
       - run: uv run --frozen --no-sync pip-audit -r scripts/qwen_cpu_test.requirements.lock --strict --disable-pip --vulnerability-service osv
       - run: uv run --frozen --no-sync pip-audit -r src/amlas/training/qwen_sft.requirements.lock --strict --disable-pip --vulnerability-service osv
+      - run: uv run --frozen --no-sync python scripts/audit_pin_sets.py
       - run: git ls-files -z | xargs -0 uv run --frozen --no-sync detect-secrets-hook --baseline .secrets.baseline
       - run: uv run --frozen --no-sync cyclonedx-py requirements "${RUNNER_TEMP}/requirements.txt" --output-format JSON -o sbom.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

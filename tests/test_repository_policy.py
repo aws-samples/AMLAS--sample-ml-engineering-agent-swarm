@@ -150,7 +150,7 @@ def test_gitpython_lock_is_patched() -> None:
 def test_native_verification_extras_and_configuration_are_preserved() -> None:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     extras = project["project"]["optional-dependencies"]
-    assert {"pytest>=8.4.2", "ruff>=0.6"}.issubset(set(extras.get("dev", [])))
+    assert {"pytest>=9.0.3", "ruff>=0.6"}.issubset(set(extras.get("dev", [])))
     assert {
         "bandit>=1.7",
         "cyclonedx-bom>=4.0",

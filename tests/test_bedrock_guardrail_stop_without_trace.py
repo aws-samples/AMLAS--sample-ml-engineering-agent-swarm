@@ -6,7 +6,8 @@ Strands 1.42.0 redacted only when a trace named a blocked policy. The product bi
 version and trace mode only, so the SDK's redaction defaults apply. These tests pin what the product does next:
 
 - an ordinary chat turn is answered as a guardrail intervention; only that turn's agent holds the redacted text;
-- the warm model continuation of a normal run is held as changed history, with the fixed hold line.
+- the warm model continuation of a normal run is held as changed history, with the fixed hold line, whenever
+  the SDK redacts: without a trace on the newer SDK, and with a trace that names a blocked policy on every version.
 
 A stub Bedrock client replays one fixed response stream: no provider, guard or network call. The expectations
 follow the installed SDK, so the same file documents the 1.42.0 behaviour. Fixtures establish source behaviour,
@@ -18,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import importlib.metadata
+import json
 import logging
 import threading
 from types import SimpleNamespace
@@ -67,6 +69,14 @@ INTERVENTION = {
     "assessment_status": "unavailable",
     "action": "UNKNOWN",
 }
+HOLD_TEXT = "Model input was held at the admission boundary."
+HELD_CONTINUATION = {
+    "disposition": "refused",
+    "diagnostic": {"phase": "resume", "reason": "continuation_failed", "error_class": "UNKNOWN"},
+}
+# Upper bound for the waits of the resumed-run scenario. A slow machine needs the room; a stage that is never
+# reached still fails when the bound ends.
+LIVENESS_WAIT_SECONDS = 180
 
 
 class ReplayClient:
@@ -230,9 +240,8 @@ class BedrockResume(LifecycleModel):
             yield event
 
 
-def test_normal_run_warm_continuation_is_held_when_the_sdk_redacts_the_resumed_input(
-    monkeypatch, tmp_path, caplog
-):
+def resumed_run(monkeypatch, tmp_path, caplog, *, trace=None, trace_mode="disabled"):
+    """One normal prompt through ``api.run_prompt``; its resumed model call is stopped inside ``BedrockModel``."""
     monkeypatch.setenv("AMLAS_DEPLOYMENT_ID", f.DEPLOYMENT)
     monkeypatch.setenv("AMLAS_DEPLOYMENT_PREFIX", "fixture-lab")
     monkeypatch.setenv("AMLAS_AGENT_REMOTE_FETCH", "1")
@@ -248,7 +257,7 @@ def test_normal_run_warm_continuation_is_held_when_the_sdk_redacts_the_resumed_i
 
     monkeypatch.setattr(native, "describe_processing_job", observe_original)
     monkeypatch.setattr(model_weight_acquisition_flow, "_resolve_backend", lambda: adapter)
-    bedrock, client = bound_model(monkeypatch)
+    bedrock, client = bound_model(monkeypatch, trace=trace, trace_mode=trace_mode)
     model = BedrockResume(bedrock)
     selected = setup(
         monkeypatch,
@@ -266,7 +275,7 @@ def test_normal_run_warm_continuation_is_held_when_the_sdk_redacts_the_resumed_i
     async def scenario():
         task = asyncio.create_task(api.run_prompt(PROMPT, settings=Settings(), policy=selected.policy))
         try:
-            deadline = asyncio.get_running_loop().time() + 5
+            deadline = asyncio.get_running_loop().time() + LIVENESS_WAIT_SECONDS
             while not task.done() and not observing.is_set():
                 assert asyncio.get_running_loop().time() < deadline
                 await asyncio.sleep(0.005)
@@ -281,7 +290,7 @@ def test_normal_run_warm_continuation_is_held_when_the_sdk_redacts_the_resumed_i
                 SimpleNamespace(handle=pending.record.handle, adapter=adapter, native=native),
             )
             with caplog.at_level(logging.WARNING):
-                response = await asyncio.wait_for(task, 5)
+                response = await asyncio.wait_for(task, LIVENESS_WAIT_SECONDS)
             return response, backend, agent, before
         finally:
             if not task.done():
@@ -300,32 +309,68 @@ def test_normal_run_warm_continuation_is_held_when_the_sdk_redacts_the_resumed_i
     added = record_form(agent.messages[len(before) :])
     assert [message["role"] for message in added] == ["user", "assistant"]
     assert added[1]["content"] == [{"text": TEXT}]
-    # Admission records are the same on both SDK versions, and no assessment is invented without a trace.
+    # The completion DATA was admitted before the call; the admission records are the same on both SDK versions.
     records = response.data["input_admission"]["records"]
     assert records[-1]["boundary"] == "COMPLETION_DATA" and records[-1]["outcome"] == "ALLOW"
     assert sum(record["outcome"] == "BLOCKED" for record in records) == 1
+    return SimpleNamespace(
+        response=response, backend=backend, sent=sent, added=added, hold_lines=hold_lines(caplog)
+    )
+
+
+def assert_held_as_changed_history(run):
+    """The product's rule: a history that the SDK changed after its admission is refused, and the run is held."""
+    # The SDK replaced the admitted DATA message with its redaction text.
+    assert run.added[0]["content"] == [{"text": REDACTED}]
+    assert run.sent["content"] != [{"text": REDACTED}]
+    # The product refused the changed history once and closed the continuation.
+    assert run.hold_lines == [HOLD_LINE]
+    assert run.backend._input_hold is True and run.backend._warm_closed == "refused"
+    # What the user sees: the action, message and status of a held run and the refused continuation.
+    response = run.response
+    assert response.action == "input_admission_held"
+    assert response.message == HOLD_TEXT
+    assert response.data["input_admission"]["status"] == "held"
+    assert response.data["warm_model_continuation"] == HELD_CONTINUATION
+    # The report carries no tool list, no intervention outcome, no provider text and no redaction text.
+    assert "guardrail_outcome" not in response.data and response.data["tools_used"] == []
+    shown = response.message + json.dumps(response.data)
+    assert TEXT not in shown and REDACTED not in shown
+
+
+def test_normal_run_warm_continuation_is_held_when_the_sdk_redacts_the_resumed_input(
+    monkeypatch, tmp_path, caplog
+):
+    """A guardrail stop without a trace on the resumed call."""
+    run = resumed_run(monkeypatch, tmp_path, caplog)
+    response = run.response
+    # No assessment is invented without a trace.
     assert response.data.get("guardrail_assessment") is None
     if REDACTS_WITHOUT_TRACE:
-        # The SDK replaced the admitted DATA message, so the product holds the run as changed history.
-        assert added[0]["content"] == [{"text": REDACTED}]
-        assert hold_lines(caplog) == [HOLD_LINE]
-        assert backend._input_hold is True and backend._warm_closed == "refused"
-        assert response.action == "input_admission_held"
-        assert response.data["input_admission"]["status"] == "held"
-        assert response.data["warm_model_continuation"] == {
-            "disposition": "refused",
-            "diagnostic": {"phase": "resume", "reason": "continuation_failed", "error_class": "UNKNOWN"},
-        }
-        # What the user sees: the fixed hold text, without the provider's text, tool list or redaction text.
-        assert response.message == "Model input was held at the admission boundary."
-        assert "guardrail_outcome" not in response.data and response.data["tools_used"] == []
+        # The locked SDK redacts on the stop reason alone, so the product holds the run as changed history.
+        assert_held_as_changed_history(run)
     else:
         # Strands 1.42.0 leaves the DATA message alone: the stop is reported as a plain intervention.
-        assert added[0]["content"] == sent["content"]
-        assert hold_lines(caplog) == []
-        assert backend._input_hold is False and backend._warm_closed == "guardrail_intervened"
+        assert run.added[0]["content"] == run.sent["content"]
+        assert run.hold_lines == []
+        assert run.backend._input_hold is False and run.backend._warm_closed == "guardrail_intervened"
         assert response.action == "guardrail_intervened"
         assert response.data["input_admission"]["status"] == "quarantined"
         assert response.data["warm_model_continuation"] == {"disposition": "guardrail_intervened"}
         assert response.message.endswith(TEXT)
         assert response.data["guardrail_outcome"] == INTERVENTION
+
+
+def test_normal_run_warm_continuation_is_held_when_a_blocked_trace_redacts_the_resumed_input(
+    monkeypatch, tmp_path, caplog
+):
+    """A guardrail stop whose trace names a blocked policy: every SDK version redacts, so the run is held."""
+    run = resumed_run(monkeypatch, tmp_path, caplog, trace=BLOCKED_TRACE, trace_mode="enabled")
+    assert_held_as_changed_history(run)
+    # The trace reaches the report as a typed assessment: it names the blocked policy and carries no text.
+    assessment = run.response.data["guardrail_assessment"]
+    assert assessment["assessment_status"] == "complete" and assessment["action"] == "BLOCKED"
+    assert [
+        (record["direction"], record["policy"], record["category"], record["action"])
+        for record in assessment["records"]
+    ] == [("INPUT", "CONTENT", "VIOLENCE", "BLOCKED")]
