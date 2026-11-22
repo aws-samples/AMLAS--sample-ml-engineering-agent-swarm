@@ -8,6 +8,20 @@ The numbers `0.01` to `0.05` were assigned afterwards. Releases `0.01` to `0.05`
 
 ## [Unreleased]
 
+## [0.11] - 2026-11-22
+
+### Added
+
+- Added `tests/test_chat_llm_absent_warning.py` with four tests that checked that `_warn_chat_llm_absent` logged one `WARNING` naming `strands-agents` and `pyproject.toml [project.dependencies]`, with no version comparison operator, dotted number, or number, operator, or extras bracket directly after the package name. They also checked that `[project.dependencies]` declared `strands-agents` exactly once, that a second call logged nothing, and that the next call after `reset_degradation_warning` logged the same text again.
+
+### Changed
+
+- Changed `_warn_chat_llm_absent` in `src/amlas/tui/chat/engine.py` to name `strands-agents` in place of `strands-agents>=1.1`, leaving the minimum version only in `[project.dependencies]` in `pyproject.toml`. The warning was logged when no real `strands` package could be imported and the local keyword fallback answered free-form chat.
+
+### Fixed
+
+- Fixed a timing-dependent failure in `tests/test_public_dns_pipe.py`, where wall-clock budgets of 1 s or less for a real forked resolver process could make a correct run on a busy machine fail with "public DNS validation exceeded the retrieval timeout" or let a case that accepted any refusal pass on that timeout. Cases that checked a rule used a 60 s `LIVENESS` budget that only ended a hung case, and every expected refusal from `_checked_addresses` was matched by its reason. The cases that called `_decode_dns_wire` directly still expected only `PublicFetchError`. In stall cases the resolver process slept for `STALL` and the tests required a refusal within `LIVENESS`. The partial-frame cases and the timeout case checked the waits the parent asked for without reading a clock. The partial-frame cases required the first wait to be the poll that met the partial frame and all later waits to total less than 1 s. The timeout case required each poll to ask for no more than the case's budget and all waits to total less than 1 s. The timeout case held `Process.start` until the resolver process reported that it ignored `SIGTERM` and required exactly one `SIGKILL`, and a fixture ended any resolver process left behind by a failing case.
+
 ## [0.10] - 2026-11-21
 
 ### Added

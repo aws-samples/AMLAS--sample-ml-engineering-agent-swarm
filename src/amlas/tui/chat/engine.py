@@ -81,7 +81,7 @@ def _warn_chat_llm_absent() -> None:
         "Chat tool-binding DISABLED — no real 'strands' package is importable, so "
         "free-form chat will be answered by the DETERMINISTIC local keyword fallback, "
         "NOT an LLM. Slash commands and the offline handlers still work normally. "
-        "'strands-agents>=1.1' is a BASE dependency (pyproject.toml [project.dependencies]), "
+        "'strands-agents' is a BASE dependency (pyproject.toml [project.dependencies]), "
         "so a real install should never reach this — treat it as a broken environment and "
         "reinstall. Logged once per process."
     )

@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
+import math
 import multiprocessing
 import multiprocessing.connection
 import os
+import re
+import select
 import signal
 import struct
 import time
@@ -19,6 +22,18 @@ URL = "https://example.com/public"
 PUBLIC = "1.1.1.1"
 IPV6 = "2606:4700:4700::1111"
 LIMIT = 4092
+# Wall-clock values. LIVENESS only ends a hung case: it lies far above any delay of a loaded
+# machine, and a call returns as soon as the helper answers, so no case waits for it. Cases
+# whose subject is a frame, guard, schema or cleanup rule hand it to the helper as its budget.
+# A stalled helper sleeps STALL, far longer than any bound a case asserts.
+LIVENESS = 60.0
+STALL = 5 * LIVENESS
+REFUSED = "public URL validation failed"
+TIMED_OUT = "public DNS validation exceeded the retrieval timeout"
+ANONYMOUS_ONLY = "only anonymous HTTP(S) public URLs are allowed"
+WEB_PORTS_ONLY = "URL control characters or nonstandard web ports are not allowed"
+PUBLIC_HOSTS_ONLY = "internal hostnames are not public research sources"
+HELPERS = []
 
 
 def payload(ips=None):
@@ -27,12 +42,35 @@ def payload(ips=None):
     ).encode("ascii")
 
 
+def noted(waits, name, call, default):
+    """Pass one bounded wait of the product through unchanged and note how long it may take."""
+
+    def wait(*args, **kwargs):
+        timeout = args[0] if args else kwargs.get("timeout", default)
+        waits.append((name, math.inf if timeout is None else timeout))
+        return call(*args, **kwargs)
+
+    return wait
+
+
+class NotedClock:
+    """The time module as the product sees it: every call passes through, a sleep is also noted."""
+
+    def __init__(self, waits):
+        self.sleep = noted(waits, "sleep", time.sleep, None)
+
+    def __getattr__(self, name):
+        return getattr(time, name)
+
+
 class ForkContext:
     """Keep real fork/Pipe; replace only the child's DNS or adversarial writer."""
 
-    def __init__(self, operation=None):
+    def __init__(self, operation=None, started=None, waits=None):
         self.native = multiprocessing.get_context("fork")
         self.operation = operation
+        self.started = started
+        self.waits = waits
         self.ends = []
         self.processes = []
         self.queue_calls = 0
@@ -44,6 +82,8 @@ class ForkContext:
     def Pipe(self, duplex=True):  # noqa: N802 - exact multiprocessing context API
         assert duplex is False
         self.ends = list(self.native.Pipe(duplex=False))
+        if self.waits is not None:
+            self.ends[0].poll = noted(self.waits, "poll", self.ends[0].poll, 0.0)
         return tuple(self.ends)
 
     def Process(self, *, target, daemon):  # noqa: N802 - exact multiprocessing context API
@@ -58,12 +98,39 @@ class ForkContext:
 
             target = run
         process = self.native.Process(target=target, daemon=daemon)
+        if self.started is not None:
+            native_start = process.start
+
+            def start():
+                native_start()
+                self.started()
+
+            process.start = start
+        if self.waits is not None:
+            process.join = noted(self.waits, "join", process.join, None)
         self.processes.append(process)
+        HELPERS.append(process)
         return process
 
 
-def configured(monkeypatch, operation=None):
-    context = ForkContext(operation)
+@pytest.fixture(autouse=True)
+def no_helper_outlives_its_case():
+    """Only a failing case leaves a helper behind; end it instead of letting it sleep on."""
+    yield
+    while HELPERS:
+        process = HELPERS.pop()
+        if not process._closed and process.pid is not None:
+            process.kill()
+            process.join()
+            process.close()
+
+
+def configured(monkeypatch, operation=None, started=None, waits=None):
+    """With a waits list, note every wait the parent asks for, as (name, seconds) in call order:
+    each poll of its reader, each join of its helper and each sleep of the product module."""
+    context = ForkContext(operation, started, waits)
+    if waits is not None:
+        monkeypatch.setattr(module, "time", NotedClock(waits))
     monkeypatch.setattr(
         module.multiprocessing,
         "get_context",
@@ -81,8 +148,8 @@ def assert_closed(context):
         assert process._closed, "reaped Process sentinel must be released"
 
 
-def refusal(monkeypatch, operation, timeout=0.5):
-    context = configured(monkeypatch, operation)
+def refusal(monkeypatch, operation, timeout=LIVENESS, reason=REFUSED, started=None, waits=None):
+    context = configured(monkeypatch, operation, started, waits)
     try:
         module._checked_addresses(URL, timeout)
     except Exception as error:
@@ -90,6 +157,7 @@ def refusal(monkeypatch, operation, timeout=0.5):
             "pipe/DNS failure must have a closed public refusal"
         )
         assert "private-detail" not in str(error) and URL not in str(error)
+        assert str(error) == reason, "the rule under test must refuse, not another limit"
     else:
         pytest.fail("malformed/failed DNS helper must not yield pinned addresses")
     assert_closed(context)
@@ -106,7 +174,7 @@ def test_actual_fork_success_without_semaphore_or_pickle_connections(monkeypatch
     monkeypatch.setattr(multiprocessing.connection.Connection, "send", lambda *_: pytest.fail("pickle send"))
     monkeypatch.setattr(multiprocessing.connection.Connection, "recv", lambda *_: pytest.fail("pickle recv"))
     try:
-        ips = module._checked_addresses(URL, 1.0)
+        ips = module._checked_addresses(URL, LIVENESS)
     except OSError:
         pytest.fail("DNS still allocates a semaphore-backed Queue under sem_open denial")
     assert ips == [PUBLIC, IPV6]
@@ -116,7 +184,7 @@ def test_actual_fork_success_without_semaphore_or_pickle_connections(monkeypatch
 def test_actual_executor_dns_helper_returns_valid_public_addresses(monkeypatch):
     context = configured(monkeypatch)
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        addresses = executor.submit(module._checked_addresses, URL, 1.0).result(timeout=3)
+        addresses = executor.submit(module._checked_addresses, URL, LIVENESS).result(timeout=2 * LIVENESS)
     assert addresses == [PUBLIC, IPV6]
     assert_closed(context)
 
@@ -129,9 +197,9 @@ def test_actual_executor_dns_guard_refusal_stays_closed(monkeypatch):
 
     monkeypatch.setattr(module.pathref, "_guard_http", denied)
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(module._checked_addresses, URL, 1.0)
+        future = executor.submit(module._checked_addresses, URL, LIVENESS)
         with pytest.raises(module.PublicFetchError, match=r"^public URL validation failed$"):
-            future.result(timeout=3)
+            future.result(timeout=2 * LIVENESS)
     assert_closed(context)
 
 
@@ -143,9 +211,9 @@ def test_actual_executor_dns_send_failure_does_not_return_addresses(monkeypatch)
 
     monkeypatch.setattr(multiprocessing.connection.Connection, "send_bytes", failed_send)
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(module._checked_addresses, URL, 1.0)
+        future = executor.submit(module._checked_addresses, URL, LIVENESS)
         with pytest.raises(module.PublicFetchError, match=r"^public URL validation failed$"):
-            future.result(timeout=3)
+            future.result(timeout=2 * LIVENESS)
     assert_closed(context)
 
 
@@ -187,7 +255,7 @@ def test_dns_writer_close_failure_after_valid_packet_remains_abnormal(monkeypatc
     monkeypatch.setattr(context, "Pipe", pipe)
     monkeypatch.setattr(multiprocessing.process.BaseProcess, "close", close)
     with pytest.raises(module.PublicFetchError, match=r"^public URL validation failed$"):
-        module._checked_addresses(URL, 1.0)
+        module._checked_addresses(URL, LIVENESS)
     assert observed_exitcodes == [1]
     assert_closed(context)
 
@@ -202,7 +270,7 @@ def test_actual_queue_refuses_read_only_ipc_tree_but_resolver_fork_succeeds(monk
     monkeypatch.setattr(module.pathref, "_guard_http", lambda _url: None)
     monkeypatch.setattr(module.pathref, "_resolve_host_ips", lambda _host: {PUBLIC})
     try:
-        ips = module._checked_addresses(URL, 1.0)
+        ips = module._checked_addresses(URL, LIVENESS)
     except OSError:
         pytest.fail("real Queue allocation prevents DNS under read-only /dev/shm")
     assert ips == [PUBLIC]
@@ -213,7 +281,7 @@ def test_companion_maximum_atomic_frame_is_accepted_with_normal_helper_exit(monk
     # JSON whitespace remains data-only and pads the small valid frame exactly.
     wire += b" " * (LIMIT - len(wire))
     context = configured(monkeypatch, lambda writer: writer.send_bytes(wire))
-    assert module._checked_addresses(URL, 1.0) == [PUBLIC]
+    assert module._checked_addresses(URL, LIVENESS) == [PUBLIC]
     assert_closed(context)
 
 
@@ -249,11 +317,19 @@ def test_actual_fork_malformed_frames_refuse_and_cleanup(monkeypatch, wire):
 def test_partial_header_body_64bit_and_oversize_refuse_promptly(monkeypatch, header):
     def incomplete(writer):
         os.write(writer.fileno(), header)
-        time.sleep(5)
+        time.sleep(STALL)
 
+    waits = []
     start = time.monotonic()
-    refusal(monkeypatch, incomplete, timeout=0.5)
-    assert time.monotonic() - start < 1.0
+    # REFUSED is the frame rule: the parent waited neither for the rest of the frame nor for
+    # its time limit, and it answered long before the helper would have ended.
+    refusal(monkeypatch, incomplete, waits=waits)
+    assert time.monotonic() - start < LIVENESS
+    # Prompt on a machine of any speed, read from what the parent asked for and not from a
+    # clock: its first wait is the poll that met the partial frame, and every wait after it
+    # (reaping the helper) adds up to less than a second.
+    assert waits[0][0] == "poll"
+    assert sum(seconds for _name, seconds in waits[1:]) < 1.0
 
 
 def test_eof_without_message_refuses(monkeypatch):
@@ -269,13 +345,44 @@ def test_abnormal_exit_after_otherwise_valid_packet_refuses(monkeypatch):
 
 
 def test_timeout_kills_term_ignoring_helper_and_closes_own_descriptors(monkeypatch):
+    budget = 0.05
+    ignoring, report = os.pipe()
+    reported = []
+    kills = []
+    waits = []
+    native_kill = multiprocessing.process.BaseProcess.kill
+
     def stalled(_writer):
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
-        time.sleep(5)
+        os.write(report, b"1")
+        time.sleep(STALL)
 
+    def ignores_sigterm():
+        # Process.start returns once the helper ignores SIGTERM, so the time limit always
+        # meets a helper that only SIGKILL ends, however slowly the machine forks.
+        reported.append(bool(select.select([ignoring], [], [], LIVENESS)[0]))
+
+    def kill(process):
+        kills.append(process.pid)
+        return native_kill(process)
+
+    monkeypatch.setattr(multiprocessing.process.BaseProcess, "kill", kill)
     start = time.monotonic()
-    refusal(monkeypatch, stalled, timeout=0.05)
-    assert time.monotonic() - start < 1.0
+    try:
+        refusal(monkeypatch, stalled, timeout=budget, reason=TIMED_OUT, started=ignores_sigterm, waits=waits)
+    finally:
+        os.close(ignoring)
+        os.close(report)
+    # The refusal came long before the helper would have ended, and SIGKILL was needed once.
+    assert time.monotonic() - start < LIVENESS
+    assert reported == [True]
+    assert len(kills) == 1
+    # The limit is enforced on time and reaping is short on a machine of any speed, read from
+    # what the parent asked for and not from a clock: no poll may wait longer than the budget
+    # (a start that already used the budget up leaves no poll), and all waits together (the
+    # poll, then reaping after SIGTERM and after SIGKILL) add up to less than a second.
+    assert max((seconds for name, seconds in waits if name == "poll"), default=0.0) <= budget
+    assert sum(seconds for _name, seconds in waits) < 1.0
 
 
 def test_helper_guard_failure_never_serializes_error_contents(monkeypatch):
@@ -286,7 +393,7 @@ def test_helper_guard_failure_never_serializes_error_contents(monkeypatch):
 
     monkeypatch.setattr(module.pathref, "_guard_http", denied)
     with pytest.raises(module.PublicFetchError) as error:
-        module._checked_addresses(URL, 1.0)
+        module._checked_addresses(URL, LIVENESS)
     assert str(error.value) == "public URL validation failed"
     assert_closed(context)
 
@@ -335,28 +442,34 @@ def test_parent_decoder_repeats_both_ip_globality_guards(monkeypatch):
 def test_measured_atomicity_mismatch_refuses_before_process_creation(monkeypatch):
     context = configured(monkeypatch)
     monkeypatch.setattr(os, "fpathconf", lambda *_: 512)
-    with pytest.raises(module.PublicFetchError):
-        module._checked_addresses(URL, 0.5)
+    with pytest.raises(module.PublicFetchError, match=r"^public DNS pipe atomicity bound is unavailable$"):
+        module._checked_addresses(URL, LIVENESS)
     assert context.processes == []
     assert all(end.closed for end in context.ends)
 
 
 @pytest.mark.parametrize(
-    "url",
+    ("url", "reason"),
     [
-        "https://user:password@example.com",  # pragma: allowlist secret - inert URL rejection fixture
-        "https://" + ".".join(("corp", "example", "com")),  # Same reserved-domain rejection fixture.
-        "http://localhost",
-        "file:///source",
-        "https://example.com:444",
+        (
+            "https://user:password@example.com",  # pragma: allowlist secret - inert URL rejection fixture
+            ANONYMOUS_ONLY,
+        ),
+        (
+            "https://" + ".".join(("corp", "example", "com")),  # Same reserved-domain rejection fixture.
+            PUBLIC_HOSTS_ONLY,
+        ),
+        ("http://localhost", PUBLIC_HOSTS_ONLY),
+        ("file:///source", ANONYMOUS_ONLY),
+        ("https://example.com:444", WEB_PORTS_ONLY),
     ],
 )
-def test_url_guards_remain_before_any_dns_ipc(monkeypatch, url):
+def test_url_guards_remain_before_any_dns_ipc(monkeypatch, url, reason):
     monkeypatch.setattr(
         module.multiprocessing, "get_context", lambda *_: pytest.fail("IPC before anonymous URL guard")
     )
-    with pytest.raises(module.PublicFetchError):
-        module._checked_addresses(url, 1.0)
+    with pytest.raises(module.PublicFetchError, match=f"^{re.escape(reason)}$"):
+        module._checked_addresses(url, LIVENESS)
 
 
 @pytest.mark.parametrize("phase", ["poll", "recv", "join", "cleanup"])
@@ -433,7 +546,7 @@ def test_process_start_failure_still_closes_pipe_and_process_handle(monkeypatch)
         return value
 
     monkeypatch.setattr(context, "Process", process)
-    with pytest.raises(module.PublicFetchError) as error:
-        module._checked_addresses(URL, 0.5)
+    with pytest.raises(module.PublicFetchError, match=r"^public URL validation failed$") as error:
+        module._checked_addresses(URL, LIVENESS)
     assert "private-detail" not in str(error.value)
     assert_closed(context)

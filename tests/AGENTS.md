@@ -576,6 +576,17 @@ Inherits [../AGENTS.md](../AGENTS.md); this document owns the files directly in 
   The guard-bound cases must fail if the checker's strict encode is made lenient.
   The fixture covers chat turns only. It proves nothing about a real model endpoint.
 
+- [Added 2026-11-21] `test_chat_llm_absent_warning.py` sets
+  `amlas.tui.chat.engine._WARNED_CHAT_LLM_ABSENT` to `False`.
+  It calls `_warn_chat_llm_absent` and requires exactly one WARNING record from the module logger.
+  The warning must name `strands-agents` and `pyproject.toml [project.dependencies]`.
+  The text must contain no version comparison operators or dotted numbers.
+  No number, operator, or extras bracket may directly follow the package name.
+  `pyproject.toml` must declare `strands-agents` exactly once in `[project.dependencies]`.
+  A second call logs nothing, and the next call after `reset_degradation_warning` logs the same text again.
+  The tests cover only the text and the once-per-process switch, without building a chat engine
+  or forcing the `strands` import to fail.
+
 - [Added 2026-11-17] The `native` fixture of `tests/test_coding_case_native.py` changes `SOURCE_SHA256` and `SOURCE_BYTES` in `amlas.data_eng.coding_case_profile` for one test. `amlas.arbiter.coding` and `amlas.evaluation.coding_pair` copy `SOURCE_SHA256` when they are first imported. When that first import happened during a test that used the fixture, the module kept the changed hash for the rest of the process and refused a later coding report: `tests/test_case_unknown_observation_budget.py` or `tests/test_runtime_case_prep_continuation.py` followed by `tests/test_normal_late_resume_after_finished_run.py` failed in one process. The whole suite passed because other test modules import both modules at collection. The fixture now imports both modules before it changes the profile. The assertions and product are unchanged. A fixture that changes a module constant first imports the product modules that copy that constant at import.
 
 - Warm multi-producer regressions require genuine registered SDK target submission,
@@ -730,7 +741,7 @@ Inherits [../AGENTS.md](../AGENTS.md); this document owns the files directly in 
 
 - `test_qwen_cpu_ci_provisioning.py` requires both real CI paths to provision the dedicated hashed CPU closure and exact five metadata pins before complete pytest, plus a strict CPU dependency audit. It retains corrupt-byte/destination refusal and CPU-only/no-CUDA checks; actual tokenizer/TinyQwen/PEFT cases remain required rather than skipped.
 
-- `test_audit_pin_sets.py` runs `scripts/audit_pin_sets.py` as a subprocess on a generated tree with an offline stand-in. It writes the stand-in as a `pip_audit` package in its temporary folder and puts that folder on `PYTHONPATH` for the script. It requires the script to refuse `--pip-audit` with a usage error and exit code 2 before running anything. It requires every tool start to use the test's interpreter, `-m`, `pip_audit`, the fixed options, and the requirements and report files for that round in the script's own temporary directory. It checks all three sets and their fixed options. It covers clean reports, unaccepted rows, ID and alias matches, inclusive expiry, and rejection of expired, unmatched, incomplete, or wrong-scope entries. It covers tool version mismatches and three tool errors. It sets `TMPDIR` for the script's process to a temporary directory below the test's own temporary folder, so the test file also passes where the system temp folder is absent or read-only. It requires exit code 1 when the tool writes a complete report with no rows and exits with a code other than 0 or 1, a report leaves out a pin, the tool reports a pin as skipped, a tool file names no version or is absent, or a requirement has no lowest version. A single-set run leaves other sets' entries alone. It checks the shipped file's empty state and format and the repository's shared uv version. It runs without skips.
+- `test_audit_pin_sets.py` runs `scripts/audit_pin_sets.py` as a subprocess on a generated tree with an offline stand-in. It writes the stand-in as a `pip_audit` package in its temporary folder and puts that folder on `PYTHONPATH` for the script. It requires the script to refuse `--pip-audit` with a usage error and exit code 2 before running anything. It requires every tool start to use the test's interpreter, `-m`, `pip_audit`, the fixed options, and the requirements and report files for that round in the script's own temporary directory. It checks all three sets and their fixed options. It covers clean reports, unaccepted rows, ID and alias matches, inclusive expiry, and rejection of expired, unmatched, incomplete, or wrong-scope entries. It covers tool version mismatches and three tool errors. It sets `TMPDIR` for the script's process to a temporary directory below the test's own temporary folder, so the test file also passes where the system temp folder is absent or read-only. It requires exit code 1 when the tool writes a complete report with no rows and exits with code 1 or with a code other than 0 or 1, a report leaves out a pin, the tool reports a pin as skipped, a tool file names no version or is absent, or a requirement has no lowest version. A single-set run leaves other sets' entries alone. It checks the shipped file's empty state and format and the repository's shared uv version. It runs without skips.
 
 - `test_github_workflow_contract.py` requires `uv run --frozen --no-sync python scripts/audit_pin_sets.py` exactly once in the GitLab `pip-audit` job script. It requires the same line exactly once as a step in the GitHub `verify` job.
 
@@ -948,6 +959,31 @@ Inherits [../AGENTS.md](../AGENTS.md); this document owns the files directly in 
   read-only /dev/shm/network-none focused fixture. It proves semaphore/pickle
   independence, measured atomic framing, strict wire/IP validation, malformed/
   partial/64-bit/oversize/EOF/helper-failure refusal and bounded reaping/deadlines.
+  One dependence on machine speed remains: on a machine starved to a few percent of a
+  CPU, a helper can outlast both 0.1 s cleanup waits after SIGTERM and SIGKILL, so a
+  case can get the cleanup refusal instead of the expected refusal.
+  Cases about a frame, guard, schema or cleanup rule give the helper `LIVENESS` (60 s).
+  The budget only ends a hung case; a call returns as soon as the helper answers.
+  Match every expected refusal from `_checked_addresses` by its reason so the time
+  limit cannot stand in for the rule under test. Each URL guard case matches the reason
+  of its own guard. The two decoder test functions call `_decode_dns_wire` directly
+  and expect only `PublicFetchError` because the decoder gives the same reason for
+  every rule.
+  Stalled helpers sleep for `STALL` (five times `LIVENESS`). Their cases assert that
+  the refusal arrives within `LIVENESS`, a bound that only ends a hang.
+  The partial-frame cases and the time-limit case record every wait the parent asks
+  for: the timeout of each `poll` of its reader and each `join` of its helper, and the
+  duration of each `sleep` of the product module. They check those values without
+  reading a clock. In the time-limit case, no poll asks for more than the case's budget
+  and all waits together stay below 1 s. In the partial-frame cases, the first wait is
+  the poll that meets the partial frame and all later waits together stay below 1 s.
+  The time-limit case keeps `Process.start` from returning until the helper reports
+  that it ignores SIGTERM. The case requires exactly one SIGKILL.
+  In new cases, assert promptness or enforcement of a time limit using the waits the
+  parent asks for, never elapsed time.
+  The deadline recheck uses a stand-in clock. A fixture ends any helper that a
+  failing case leaves behind. Never give a real fork a budget of a few seconds
+  in a new case.
   These tests add no native model, filesystem allowlist or egress admission.
 
 - `test_managed_open_swe_preparation.py` uses opaque synthetic Parquet bytes and

@@ -232,6 +232,16 @@ def test_a_tool_exit_code_other_than_0_or_1_fails_after_a_complete_report_withou
     assert len(calls) == 4
 
 
+def test_a_tool_exit_code_1_fails_after_a_complete_report_without_findings(tmp_path):
+    result, calls = _run(tmp_path, _tree(tmp_path), answers={"exit_code": 1})
+    assert result.returncode == 1, result.stdout + result.stderr
+    ended = "(exit 1, report without a reported entry): stand-in: ended with the exit code of its table"
+    for name in ("tool-pins-1", "uv-lock-all-1", "uv-lock-all-2", "floors-1"):
+        assert f"PROBLEM  check tool failed for {name} {ended}" in result.stdout
+    assert "RESULT new=0 accepted_rows=0 problems=4" in result.stdout
+    assert len(calls) == 4, "every round was still sent to the tool"
+
+
 def test_a_report_that_leaves_a_pin_out_fails(tmp_path):
     result, calls = _run(tmp_path, _tree(tmp_path), answers={"left_out": ["beta==2.0"]})
     assert result.returncode == 1

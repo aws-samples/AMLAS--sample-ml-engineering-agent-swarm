@@ -21,8 +21,9 @@ Exit codes:
      date, is past its expiry date, or belongs to a checked pin set and matches no
      reported entry. A tool file names no version or is absent, the files name different
      versions of one tool, or a requirement in pyproject.toml has no lowest version.
-     The check tool cannot start, exits with a code other than 0 or 1, writes no readable
-     report, or reports a dependency as skipped, or a report leaves out a pin.
+     The check tool cannot start, exits with a code other than 0 or 1, exits with code 1
+     and its report holds no reported entry, writes no readable report, or reports a
+     dependency as skipped, or a report leaves out a pin.
      An unhandled error ends the script with a traceback, for example when uv-lock-all is
      selected and uv.lock is absent, when floors is selected and pyproject.toml contains
      invalid TOML, or when --today gives no valid date.
@@ -201,6 +202,9 @@ def check(lines: list[str], directory: Path, label: str, problems: list[str]) ->
                     "fix": ",".join(item.get("fix_versions", [])) or "none",
                 }
             )
+    if done.returncode == 1 and not rows:
+        tail = " ".join(done.stderr.split())[-300:]
+        problems.append(f"check tool failed for {label} (exit 1, report without a reported entry): {tail}")
     return rows
 
 
