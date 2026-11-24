@@ -92,6 +92,7 @@ cross-project security requirements, and the top-level verification contract.
 ## Local Contracts
 
 - Both source CI paths provision the dedicated hash-locked Qwen CPU test environment, five source-pinned public tokenizer/config/index metadata files and the one pinned public evaluation file before all Python tests. The evaluation file is verified by size and SHA256, and `environment.sh` exports its location as `AMLAS_TEST_HUMANEVAL_PARQUET`. The CPU overlay is separate from the fixed GPU/runtime lock, downloads no tensors and receives its own strict dependency audit. Source CI success does not qualify9B/GPU/native training.
+- `.gitlab-ci.yml` names its default job image by the tag's index digest; to refresh it, run `docker buildx imagetools inspect public.ecr.aws/docker/library/python:3.11-slim`, which reads the registry without a pull, take the top `Digest:` value for the index rather than a platform manifest digest, and replace the digest on the `image:` line; the branch pipeline is the proof. The pipeline names only the default and compiler images, both by digest, in the `image` entries under `default` and `processing-bootstrap`, with no top-level `image` or `services` key and no `services` key under `default` or any job.
 
 ### Repository authority
 

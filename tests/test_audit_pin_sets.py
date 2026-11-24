@@ -110,7 +110,7 @@ def _entry(identifier="ID-1", package="alpha", pin_set="floors", expires="2026-1
     return "[[accepted]]\n" + "".join(f'{key} = "{value}"\n' for key, value in fields.items() if value is not None)
 
 
-def _run(tmp_path, root, accepted="", findings=None, mode="ok", sets=None, extra=(), answers=None):
+def _run(tmp_path, root, accepted="", findings=None, mode="ok", sets=None, extra=(), answers=None, cwd=None):
     package = tmp_path / "stand_in" / "pip_audit"
     package.mkdir(parents=True, exist_ok=True)
     (package / "__init__.py").write_text("")
@@ -130,7 +130,7 @@ def _run(tmp_path, root, accepted="", findings=None, mode="ok", sets=None, extra
     scratch.mkdir(exist_ok=True)
     environment["TMPDIR"] = str(scratch)
     result = subprocess.run(  # nosec B603 - the test's own interpreter on the script under test, arguments the test builds, no shell
-        command, capture_output=True, text=True, check=False, env=environment
+        command, capture_output=True, text=True, check=False, env=environment, cwd=cwd
     )
     recorded = [json.loads(line) for line in calls.read_text().splitlines()] if calls.exists() else []
     return result, recorded
@@ -361,9 +361,47 @@ def test_the_check_tool_is_started_only_as_the_pip_audit_module_of_this_interpre
     assert result.returncode == 0, result.stdout + result.stderr
     scratch = Path(calls[0]["args"][3]).parent
     rounds = ["tool-pins-1", "uv-lock-all-1", "uv-lock-all-2", "floors-1"]
-    first = [sys.executable, "-m", "pip_audit", "--disable-pip", "--no-deps", "-r"]
+    first = [sys.executable, "-P", "-m", "pip_audit", "--disable-pip", "--no-deps", "-r"]
     second = ["--strict", "--vulnerability-service", "osv", "-f", "json", "-o"]
     assert [call["started"] for call in calls] == [
         [*first, str(scratch / f"{name}.txt"), *second, str(scratch / f"{name}.json")] for name in rounds
     ], "this interpreter, the module, the fixed options and the two files of each round, nothing else"
     assert scratch.is_absolute() and not scratch.exists(), "the files sat in the script's own temporary directory"
+
+
+# A package named pip_audit in the working folder of the script. It leaves a marker when it runs and
+# writes a report without rows, so a run that used it would end with exit code 0.
+WORKING_FOLDER_PACKAGE = r"""
+import json, pathlib, sys
+
+pathlib.Path(MARKER).write_text("started")
+args = sys.argv[1:]
+lines = pathlib.Path(args[args.index("-r") + 1]).read_text().split()
+clean = [{"name": line.split("==")[0], "version": line.split("==")[1], "vulns": []} for line in lines]
+pathlib.Path(args[args.index("-o") + 1]).write_text(json.dumps({"dependencies": clean, "fixes": []}))
+"""
+
+
+def test_the_check_tool_is_not_taken_from_the_working_folder(tmp_path):
+    """A module start puts the working folder first on the import path unless the start says otherwise."""
+    folder = tmp_path / "working_folder"
+    package = folder / "pip_audit"
+    package.mkdir(parents=True)
+    started = tmp_path / "working_folder_package_started"
+    (package / "__init__.py").write_text("")
+    (package / "__main__.py").write_text(WORKING_FOLDER_PACKAGE.replace("MARKER", repr(str(started))))
+    result, calls = _run(tmp_path, _tree(tmp_path), findings={"alpha==1.0": [FINDING]}, cwd=folder)
+    assert not started.exists(), "a pip_audit package in the working folder stood in for the check tool"
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "NEW      floors alpha 1.0 ID-1 fixed in 1.2" in result.stdout
+    assert len(calls) == 4, "every round went to the module that PYTHONPATH names, which the start leaves in place"
+    assert all(call["started"][1] == "-P" for call in calls)
+
+
+def test_an_option_without_its_value_is_a_usage_error(tmp_path):
+    """--help in the place of a value is the missing value of that option, not a request for the help text."""
+    result, calls = _run(tmp_path, _tree(tmp_path), extra=["--root", "--help"])
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "usage:" in result.stderr and "argument --root: expected one argument" in result.stderr
+    assert result.stdout == ""
+    assert calls == [], "a refused command line runs nothing"

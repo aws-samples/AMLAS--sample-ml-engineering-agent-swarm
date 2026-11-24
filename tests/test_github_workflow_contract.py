@@ -269,6 +269,9 @@ OLDER_AND_NEWER_KERNELS = [
 ]
 VERIFY_STAGE_HEADER = "\nverify:\n  stage: verify\n"
 STILL_RUNS_WORDS = "only the format check and both builds run here"
+# The fetch step hands the reference of the source that answered to the container steps through this variable.
+FETCHED_IMAGE_VARIABLE = "PINNED_COMPILER_IMAGE"
+FETCHED_IMAGE = "${" + FETCHED_IMAGE_VARIABLE + ":?}"
 
 
 def test_release_jobs_stop_at_their_time_limits():
@@ -276,6 +279,18 @@ def test_release_jobs_stop_at_their_time_limits():
     jobs = yaml.safe_load(WORKFLOW.read_text())["jobs"]
     assert jobs["verify"]["timeout-minutes"] == 180
     assert jobs["processing-bootstrap"]["timeout-minutes"] == 30
+
+
+def _start_step_script(script, environment, folder=None):
+    """Start a step's script the way the runner starts a step that names no shell: bash -e."""
+    return subprocess.run(
+        ["bash", "-e", str(script)],
+        cwd=folder,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
 
 def _run_environment_transport(tmp_path, exports):
@@ -294,12 +309,8 @@ def _run_environment_transport(tmp_path, exports):
     github_env.write_text("")
     script = tmp_path / "transport.sh"
     script.write_text("\n".join(lines[1:]) + "\n")
-    result = subprocess.run(
-        ["bash", "-e", str(script)],
-        env={"PATH": os.environ["PATH"], "TMPDIR": str(tmp_path), "GITHUB_ENV": str(github_env)},
-        capture_output=True,
-        text=True,
-        check=False,
+    result = _start_step_script(
+        script, {"PATH": os.environ["PATH"], "TMPDIR": str(tmp_path), "GITHUB_ENV": str(github_env)}
     )
     return result, github_env.read_text()
 
@@ -364,8 +375,8 @@ def _initializer_container_options(workflow_text):
     assert len(commands) == 1
     tokens = shlex.split(commands[0].replace("\\\n", " "))
     assert tokens[:2] == ["docker", "run"]
-    image = next(i for i, token in enumerate(tokens) if token.startswith("public.ecr.aws/"))
-    return tokens[2:image]
+    assert tokens.count(FETCHED_IMAGE) == 1, "the container runs the image that the fetch step handed on"
+    return tokens[2 : tokens.index(FETCHED_IMAGE)]
 
 
 def _option_values(options, flag):
@@ -545,7 +556,8 @@ def _github_initializer_script(workflow_text):
     assert len(commands) == 1
     tokens = shlex.split(commands[0].replace("\\\n", " "))
     assert tokens[:2] == ["docker", "run"]
-    image = next(i for i, token in enumerate(tokens) if token.startswith("public.ecr.aws/"))
+    assert tokens.count(FETCHED_IMAGE) == 1, "the container runs the image that the fetch step handed on"
+    image = tokens.index(FETCHED_IMAGE)
     assert tokens[image + 1 : -1] == ["sh", "-ec"], "the shell must stop at the first failing command"
     variables = dict(value.split("=", 1) for value in _option_values(tokens[2:image], "-e"))
     return tokens[-1], variables
@@ -693,3 +705,183 @@ def test_each_release_condition_is_checked_by_itself(original, mutated):
     _require_unconditional_release_jobs(text)
     with pytest.raises(AssertionError):
         _require_unconditional_release_jobs(text.replace(original, mutated))
+
+
+def _compiler_image_sources():
+    """The recipe's compiler image on the two registries that serve it, the first source first."""
+    recipe = (ROOT / "Dockerfile.processing").read_text()
+    match = re.search(
+        r"^FROM --platform=linux/amd64 public\.ecr\.aws/docker/library/(\S+@sha256:[a-f0-9]{64}) AS initializer$",
+        recipe,
+        re.M,
+    )
+    assert match is not None
+    return [f"public.ecr.aws/docker/library/{match.group(1)}", f"docker.io/library/{match.group(1)}"]
+
+
+def _initializer_run_steps(workflow_text):
+    job = yaml.safe_load(workflow_text)["jobs"]["processing-bootstrap"]
+    return [step["run"] for step in job["steps"] if "run" in step]
+
+
+def _stand_in_docker(folder):
+    """A docker that records every call and refuses a pull from each registry named in STAND_IN_REFUSES."""
+    tools = folder / "tools"
+    tools.mkdir(parents=True)
+    docker = tools / "docker"
+    docker.write_text(
+        "#!/bin/sh\n"
+        'for argument in "$@"; do printf "%s\\037" "$argument"; done >> "$STAND_IN_LOG"\n'
+        'printf "\\036" >> "$STAND_IN_LOG"\n'
+        '[ "$1" = pull ] || exit 0\n'
+        'case " $STAND_IN_REFUSES " in\n'
+        '  *" ${argument%%/*} "*) echo "error from registry: Data limit exceeded" >&2; exit 125 ;;\n'
+        "esac\n"
+    )
+    docker.chmod(0o755)
+    return tools, folder / "docker.log"
+
+
+def _run_step(folder, text, environment):
+    """Run one step's text with a stand-in docker on PATH; return the result, the docker calls and GITHUB_ENV."""
+    tools, log = _stand_in_docker(folder)
+    script = folder / "step.sh"
+    script.write_text(text)
+    github_env = folder / "github-env"
+    github_env.write_text("")
+    result = _start_step_script(
+        script,
+        {
+            "PATH": f"{tools}{os.pathsep}{os.environ['PATH']}",
+            "TMPDIR": str(folder / "tmp"),
+            "GITHUB_ENV": str(github_env),
+            "STAND_IN_LOG": str(log),
+            **environment,
+        },
+        folder,
+    )
+    calls = [call.split("\x1f")[:-1] for call in log.read_text().split("\x1e")[:-1]] if log.exists() else []
+    return result, calls, github_env.read_text()
+
+
+def _require_image_fetch(workflow_text, tmp_path):
+    """The first step asks the two sources in order for one digest and hands on the reference that answered."""
+    runs = _initializer_run_steps(workflow_text)
+    fetch = runs[0]
+    assert "docker pull" in fetch and not any("docker pull" in run for run in runs[1:]), (
+        "one step fetches the image, before any step that runs it"
+    )
+    first, second = _compiler_image_sources()
+    pull = ["pull", "--platform", "linux/amd64"]
+
+    result, calls, written = _run_step(tmp_path / "first-answers", fetch, {"STAND_IN_REFUSES": ""})
+    assert result.returncode == 0, result.stderr
+    assert calls == [[*pull, first]], "a first source that answers is the only one asked"
+    assert written == f"{FETCHED_IMAGE_VARIABLE}={first}\n"
+    assert result.stdout.splitlines() == ["The pinned compiler image came from public.ecr.aws."]
+
+    result, calls, written = _run_step(tmp_path / "first-refuses", fetch, {"STAND_IN_REFUSES": "public.ecr.aws"})
+    assert result.returncode == 0, result.stderr
+    assert calls == [[*pull, first], [*pull, second]], "after a refusal the second source is asked for the same digest"
+    assert written == f"{FETCHED_IMAGE_VARIABLE}={second}\n"
+    assert result.stdout.splitlines() == ["The pinned compiler image came from docker.io."]
+    assert "public.ecr.aws did not deliver the pinned compiler image." in result.stderr
+
+    both = {"STAND_IN_REFUSES": "public.ecr.aws docker.io"}
+    result, calls, written = _run_step(tmp_path / "both-refuse", fetch, both)
+    assert result.returncode != 0, "a job without its image must fail"
+    assert calls == [[*pull, first], [*pull, second]]
+    assert written == "", "no reference is handed on when no source answered"
+    assert result.stdout == ""
+    assert result.stderr.splitlines()[-1] == "No source delivered the pinned compiler image."
+
+
+def _require_container_steps_run_the_fetched_image(workflow_text, tmp_path):
+    """Each container step runs the reference that was handed on and starts nothing without one."""
+    steps = [run for run in _initializer_run_steps(workflow_text) if "docker run" in run]
+    assert len(steps) == 2
+    handed_on = _compiler_image_sources()[1]
+    for number, text in enumerate(steps):
+        assert "@sha256:" not in text, "a container step names no image of its own"
+        result, calls, _written = _run_step(
+            tmp_path / f"container-{number}", text, {FETCHED_IMAGE_VARIABLE: handed_on}
+        )
+        assert result.returncode == 0, result.stderr
+        assert len(calls) == 1 and calls[0][0] == "run"
+        assert calls[0].count(handed_on) == 1
+        assert calls[0][calls[0].index(handed_on) + 1 : -1] == ["sh", "-ec"]
+        result, calls, _written = _run_step(tmp_path / f"container-{number}-without-an-image", text, {})
+        assert result.returncode != 0 and calls == [], "a step without a fetched image starts no container"
+        assert FETCHED_IMAGE_VARIABLE in result.stderr
+
+
+def _require_fetched_image_flow(workflow_text, tmp_path):
+    _require_image_fetch(workflow_text, tmp_path / "fetch")
+    _require_container_steps_run_the_fetched_image(workflow_text, tmp_path / "containers")
+
+
+def test_github_initializer_job_fetches_its_image_from_the_first_source_that_answers(tmp_path):
+    """A registry counts its data limit by network address, so the job asks another registry for the same digest."""
+    _require_image_fetch(WORKFLOW.read_text(), tmp_path)
+
+
+def test_github_initializer_container_steps_run_the_image_that_was_fetched(tmp_path):
+    _require_container_steps_run_the_fetched_image(WORKFLOW.read_text(), tmp_path)
+
+
+def _sources_in_the_other_order(text):
+    first, second = _compiler_image_sources()
+    return text.replace(first, "<first>").replace(second, first).replace("<first>", second)
+
+
+HAND_ON_LINE = '                echo "PINNED_COMPILER_IMAGE=$image" >> "$GITHUB_ENV"\n'
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        pytest.param(_sources_in_the_other_order, id="sources-in-the-other-order"),
+        pytest.param(
+            lambda text: text.replace(" \\\n            " + _compiler_image_sources()[1], ""),
+            id="second-source-removed",
+        ),
+        pytest.param(
+            lambda text: text.replace(_compiler_image_sources()[1], _compiler_image_sources()[1][:-1]),
+            id="second-source-with-another-digest",
+        ),
+        pytest.param(
+            lambda text: text.replace("            return 1\n", "            return 0\n"),
+            id="two-refusals-do-not-fail-the-step",
+        ),
+        pytest.param(lambda text: text.replace(HAND_ON_LINE, ""), id="reference-not-handed-on"),
+        pytest.param(
+            lambda text: text.replace("docker pull --platform linux/amd64 ", "docker pull "),
+            id="pull-without-its-platform",
+        ),
+        pytest.param(
+            lambda text: text.replace("if docker pull", "if true || docker pull"),
+            id="first-source-taken-without-a-pull",
+        ),
+        pytest.param(
+            lambda text: text.replace(
+                f"\"{FETCHED_IMAGE}\" sh -ec '\n              mkdir",
+                f"{_compiler_image_sources()[0]} sh -ec '\n              mkdir",
+            ),
+            id="preparation-names-its-own-image",
+        ),
+        pytest.param(
+            lambda text: text.replace(
+                f"\"{FETCHED_IMAGE}\" sh -ec '\n              uname",
+                f"\"${FETCHED_IMAGE_VARIABLE}\" sh -ec '\n              uname",
+            ),
+            id="checks-may-start-without-a-fetched-image",
+        ),
+    ],
+)
+def test_each_part_of_the_image_fetch_is_checked_by_itself(mutate, tmp_path):
+    text = WORKFLOW.read_text()
+    _require_fetched_image_flow(text, tmp_path / "kept")
+    changed = mutate(text)
+    assert changed != text, "the real text must be present for the mutation to mean anything"
+    with pytest.raises(AssertionError):
+        _require_fetched_image_flow(changed, tmp_path / "changed")

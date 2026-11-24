@@ -10,9 +10,10 @@ Pin sets:
   floors       the lowest version that each requirement in pyproject.toml allows
 
 Each set goes to pip-audit as pinned requirements (OSV service, no resolution). The check tool
-always runs as the pip_audit module of the interpreter that runs this script. An entry of
-the report that is accepted for a time is one [[accepted]] table in
-scripts/pin_audit_accepted.toml.
+always runs as the pip_audit module of the interpreter that runs this script, started with -P.
+With -P, Python does not put the working folder on the tool's import path. Python still
+searches folders named in PYTHONPATH before the installed packages. An entry of the report
+that is accepted for a time is one [[accepted]] table in scripts/pin_audit_accepted.toml.
 
 Exit codes:
   1  No accepted entry covers a reported entry, or pin_audit_accepted.toml or the file
@@ -27,7 +28,8 @@ Exit codes:
      An unhandled error ends the script with a traceback, for example when uv-lock-all is
      selected and uv.lock is absent, when floors is selected and pyproject.toml contains
      invalid TOML, or when --today gives no valid date.
-  2  A usage error: an unknown option or an unknown or empty selection for --sets.
+  2  A usage error: an unknown option, an unknown or empty selection for --sets, or an
+     option without its value. For example, --root --help leaves --root without a value.
   0  With --help, the script prints the help text and exits with code 0 without checking
      a pin set. Otherwise, it exits with code 0 only if it checks every selected pin set
      and none of these cases apply.
@@ -166,7 +168,7 @@ def check(lines: list[str], directory: Path, label: str, problems: list[str]) ->
     requirements = directory / f"{label}.txt"
     report = directory / f"{label}.json"
     requirements.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    arguments = [sys.executable, "-m", "pip_audit", "--disable-pip", "--no-deps", "-r", str(requirements)]
+    arguments = [sys.executable, "-P", "-m", "pip_audit", "--disable-pip", "--no-deps", "-r", str(requirements)]
     arguments += ["--strict", "--vulnerability-service", "osv", "-f", "json", "-o", str(report)]
     try:
         done = subprocess.run(  # nosemgrep: dangerous-subprocess-use-audit  # nosec B603 - this interpreter's pip_audit module, fixed options, own temporary files, no shell

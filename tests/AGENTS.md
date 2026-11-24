@@ -741,9 +741,9 @@ Inherits [../AGENTS.md](../AGENTS.md); this document owns the files directly in 
 
 - `test_qwen_cpu_ci_provisioning.py` requires both real CI paths to provision the dedicated hashed CPU closure and exact five metadata pins before complete pytest, plus a strict CPU dependency audit. It retains corrupt-byte/destination refusal and CPU-only/no-CUDA checks; actual tokenizer/TinyQwen/PEFT cases remain required rather than skipped.
 
-- `test_audit_pin_sets.py` runs `scripts/audit_pin_sets.py` as a subprocess on a generated tree with an offline stand-in. It writes the stand-in as a `pip_audit` package in its temporary folder and puts that folder on `PYTHONPATH` for the script. It requires the script to refuse `--pip-audit` with a usage error and exit code 2 before running anything. It requires every tool start to use the test's interpreter, `-m`, `pip_audit`, the fixed options, and the requirements and report files for that round in the script's own temporary directory. It checks all three sets and their fixed options. It covers clean reports, unaccepted rows, ID and alias matches, inclusive expiry, and rejection of expired, unmatched, incomplete, or wrong-scope entries. It covers tool version mismatches and three tool errors. It sets `TMPDIR` for the script's process to a temporary directory below the test's own temporary folder, so the test file also passes where the system temp folder is absent or read-only. It requires exit code 1 when the tool writes a complete report with no rows and exits with code 1 or with a code other than 0 or 1, a report leaves out a pin, the tool reports a pin as skipped, a tool file names no version or is absent, or a requirement has no lowest version. A single-set run leaves other sets' entries alone. It checks the shipped file's empty state and format and the repository's shared uv version. It runs without skips.
+- `test_audit_pin_sets.py` runs `scripts/audit_pin_sets.py` as a subprocess on a generated tree with an offline stand-in. It writes the stand-in as a `pip_audit` package in its temporary folder and puts that folder on `PYTHONPATH` for the script. It requires the script to refuse `--pip-audit` with a usage error and exit code 2 before running anything. It requires exit code 2 for `--root --help`, with `usage:` and `argument --root: expected one argument` on standard error, empty standard output, and no start of the check tool. It requires every tool start to use the test's interpreter, `-P`, `-m`, `pip_audit`, the fixed options, and the requirements and report files for that round in the script's own temporary directory. It puts a `pip_audit` package in the working folder and requires that it does not run, that all four rounds use the stand-in named in `PYTHONPATH`, that each start includes `-P`, and that the reported row still makes the script exit with code 1. It checks all three sets and their fixed options. It covers clean reports, unaccepted rows, ID and alias matches, inclusive expiry, and rejection of expired, unmatched, incomplete, or wrong-scope entries. It covers tool version mismatches and three tool errors. It sets `TMPDIR` for the script's process to a temporary directory below the test's own temporary folder, so the test file also passes where the system temp folder is absent or read-only. It requires exit code 1 when the tool writes a complete report with no rows and exits with code 1 or with a code other than 0 or 1, a report leaves out a pin, the tool reports a pin as skipped, a tool file names no version or is absent, or a requirement has no lowest version. A single-set run leaves other sets' entries alone. It checks the shipped file's empty state and format and the repository's shared uv version. It runs without skips.
 
-- `test_github_workflow_contract.py` requires `uv run --frozen --no-sync python scripts/audit_pin_sets.py` exactly once in the GitLab `pip-audit` job script. It requires the same line exactly once as a step in the GitHub `verify` job.
+- `test_github_workflow_contract.py` requires `uv run --frozen --no-sync python scripts/audit_pin_sets.py` exactly once in the GitLab `pip-audit` job script. It requires the same line exactly once as a step in the GitHub `verify` job. It runs the fetch step of `processing-bootstrap` with `bash -e` and a stand-in `docker` and checks that the pulls use `linux/amd64` and run in order, with a second pull only if the first fails. It checks that success passes on the reference that was pulled and that two refusals pass on nothing, fail the step, and end with a line saying no source delivered the image. It also checks that each container step runs the supplied reference once when the variable is set and fails without starting a container when it is unset. Nine changed copies of the workflow text show that each part is checked.
 
 - Governance regressions distinguish exact reviewed public model commits from
   numeric fragments, altered tokens and separately retained private identifiers.
@@ -868,7 +868,54 @@ Inherits [../AGENTS.md](../AGENTS.md); this document owns the files directly in 
   initializer crate with the image's pinned compiler, exact-toolchain formatting,
   locked/offline tests and static release build; the public check container is
   offline and mounts source read-only. Pipeline-shape tests supplement real
-  remote toolchain execution.
+  remote toolchain execution. It requires that `processing_bootstrap/Cargo.toml`
+  have no dependency table of any kind at any depth and that
+  `processing_bootstrap/Cargo.lock` list only the initializer crate itself. Nine
+  changed copies show that the check can fail with a message telling the
+  maintainer that no dependency check reads the lock file, so the first registry
+  crate must come with a check of its own.
+  It requires the GitLab pipeline to name exactly two images, the default
+  `public.ecr.aws/docker/library/python:3.11-slim` image and the compiler image,
+  both by digest and with a 64-character SHA-256 digest for the default. It
+  refuses top-level `image` and `services` keys and `services` keys under
+  `default` or any job. Four changed copies of the pipeline text show that the
+  first check can fail, and four more show the additional refusals. It requires
+  exactly two image references by digest in the public workflow, both in the
+  first step of `processing-bootstrap`: the recipe's compiler image on Amazon
+  ECR Public first and the same tag and digest on Docker Hub second. Four
+  changed copies of the workflow text show that this check can fail. Three
+  copies change the second source. One copy makes a container step name the
+  image by digest itself. It also searches the whole workflow text for a further
+  image reference by digest. One changed copy, with a reference by digest in the
+  `verify` job, shows that this search can fail. It refuses `container` or
+  `services` keys in any job, `docker://` in any step's `uses` entry, and the
+  word `docker` in `run` text outside `processing-bootstrap`. It requires the
+  run steps of `processing-bootstrap` to start `docker` exactly three times: one
+  `docker pull` in the fetch step and one `docker run` in each of the two
+  container steps. It requires the word `docker` exactly five times in the whole
+  workflow text: in those three starts and in the two image references. So a
+  quoted command name or a step's `shell` key that spells `docker` is noticed.
+  It requires both container steps to run the reference passed in
+  `PINNED_COMPILER_IMAGE`. Eleven changed copies of the workflow text show that
+  these checks can fail. It requires the name `PINNED_COMPILER_IMAGE` exactly
+  three times in the workflow text: in the fetch step's write and in each
+  container step's read. So an `env` entry of the workflow, a job or a step that
+  spells the name is noticed. It requires the run text of `processing-bootstrap`
+  to name `GITHUB_ENV` once, so a second write to the job environment by that
+  name in that run text is noticed. Five changed copies of the workflow text
+  show that these checks can fail. It requires `--platform linux/amd64` among
+  the options of each of the two container steps in `processing-bootstrap`. It
+  does not count the same option on the fetch step's pull command. Four more
+  changed copies of the workflow text show that this check can fail. These image
+  checks read only the two CI files and do not follow scripts that steps run,
+  actions that steps use, or files that the pipeline includes. They do not see
+  another container tool in any job of the public workflow, a `docker` command
+  in a GitLab job script, or a command name that a step puts together while it
+  runs. The counts of `docker`, `PINNED_COMPILER_IMAGE` and `GITHUB_ENV` look
+  for each word as it is spelled, so they do not see a word written with a YAML
+  escape in an `env` entry or a `shell` key, a word put together at run time, or
+  a write to the job environment that does not spell `PINNED_COMPILER_IMAGE` and
+  either goes through the `github.env` context or stands in a `shell` key.
 - `test_acquisition_failure_diagnostics.py` covers closed failure-stage/type/cause
   propagation and raw URL/data-detail refusal without assumed image permissions.
 - `test_native_acquisition_profile.py` retains strict schema1 and rejects native

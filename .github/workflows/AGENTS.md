@@ -24,6 +24,26 @@ Inherits [../AGENTS.md](../AGENTS.md); this document owns the files directly in 
   its public toolchain into workspace tmp and adds the exact-toolchain formatter
   there. Both strict profiles then use that same mounted toolchain in a network-
   disabled container with read-only source and separate output directories.
+- The first step of `processing-bootstrap` fetches the pinned compiler image from
+  Amazon ECR Public and tries Docker Hub with the same tag and digest only if the
+  first pull fails. It uses a second source instead of retrying the first because
+  the registry counts its data limit by network address. The step prints one line
+  naming the source that answers and writes its full digest-pinned reference to
+  `PINNED_COMPILER_IMAGE` through `GITHUB_ENV`. The step fails if both sources
+  refuse. The two container steps run `${PINNED_COMPILER_IMAGE:?}`, so neither
+  starts a container without a fetched image.
+- `public-release.yml` names images only in that fetch step, both by digest. Use
+  no `container` or `services` key in any job and no step `uses` entry that
+  starts with `docker://`. Keep exactly five occurrences of the word `docker` in
+  the whole file, all in `processing-bootstrap`: one `docker pull` in the fetch
+  step, one `docker run` in each of the two container steps, and the two image
+  references of the fetch step. Use the word nowhere else in the file, including
+  another job, a step's `shell` key, a step name or a comment. Set
+  `PINNED_COMPILER_IMAGE` only in the fetch step. Name the variable exactly
+  three times: in the fetch step's write and in each of the two container steps'
+  reads. Use no `env` entry that names the variable in the workflow, a job or a
+  step. In `processing-bootstrap`, write to `GITHUB_ENV` only in the fetch step,
+  so that the job's run text names `GITHUB_ENV` once.
 - Check the strict default and explicit `sagemaker-native-v1` feature separately,
   with locked offline tests/builds and distinct target directories. Neither
   profile's checks may be skipped or overwrite the other's release artifact.

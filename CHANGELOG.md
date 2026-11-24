@@ -8,6 +8,12 @@ The numbers `0.01` to `0.05` were assigned afterwards. Releases `0.01` to `0.05`
 
 ## [Unreleased]
 
+## [0.12] - 2026-11-24
+
+### Fixed
+
+- Fixed `processing-bootstrap` in `.github/workflows/public-release.yml` so public project maintainers could still run the job when Amazon ECR Public refused the pull and Docker Hub served the same pinned compiler image. A first step fetched the image from Amazon ECR Public, asked Docker Hub for the same tag and digest only when that pull failed, printed which source answered, and failed when both refused.
+
 ## [0.11] - 2026-11-22
 
 ### Added
