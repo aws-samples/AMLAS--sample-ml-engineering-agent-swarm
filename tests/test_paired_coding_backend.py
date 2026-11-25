@@ -955,3 +955,36 @@ def test_actual_passed_receipts_without_any_native_trace_are_refused(packet, mon
     result = packet[0].artifacts(handle)
     assert result["evaluated"] is False and result["success"] is False
     assert result["status"] == "output_verification_failed"
+
+
+def test_actual_verifier_statement_reaches_the_adapter_result_for_an_evaluated_pair(packet, monkeypatch):
+    bound = actual_output_binding(packet, monkeypatch)
+    handle = submit(packet)
+    install_actual_verifier_outputs(packet, handle, bound, cleanup_complete=True)
+    result = packet[0].artifacts(handle)
+    assert result["status"] == "evaluated" and result["evaluated"] is result["success"] is True
+    # Fixture population: no case of either arm has an answer, so nothing passed and nothing is without a verdict.
+    assert result["result_statement"] == (
+        "Base passed 0 of 164 cases. Tuned passed 0 of 164. "
+        "No case ended without a verdict (timeout or infrastructure error). "
+        "The difference in passed cases, tuned minus base, is 0. "
+        "Each case that ran had 10 seconds for its test and all of its remote calls, "
+        "counted from the moment its remote session was accepted. "
+        "Neither arm ran a case a second time."
+    )
+    assert result["next_step"] == "Put result_statement into your final report unchanged."
+    assert result["summary"]["base_pass_count_range"] == result["summary"]["tuned_pass_count_range"] == [0, 0]
+    assert result["summary"]["delta_pass_count_range"] == [0, 0]
+    assert result["quality_success"] is result["native_admission"] is False
+
+
+def test_actual_verifier_unresolved_cleanup_reaches_the_adapter_result_without_a_statement(
+    packet, monkeypatch
+):
+    bound = actual_output_binding(packet, monkeypatch)
+    handle = submit(packet)
+    install_actual_verifier_outputs(packet, handle, bound, cleanup_complete=False)
+    result = packet[0].artifacts(handle)
+    assert result["status"] == "cleanup_unresolved" and result["evaluated"] is result["success"] is False
+    assert result["summary"]["delta_pass_count_range"] == [0, 0]
+    assert "result_statement" not in result and "next_step" not in result

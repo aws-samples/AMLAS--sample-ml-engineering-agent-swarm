@@ -74,6 +74,20 @@ Inherits [../AGENTS.md](../AGENTS.md); this document owns the files directly in 
   damaged. Before the replacement finishes, the original's report is what a reader gets.
 <!-- normal-native-report-pointer-contract:end -->
 
+- Ended read (added 2026-11-23): `read_normal_run_status` is a second reader of the report object. For a row
+  in stage `enrolled` that holds `report_checkpoint_ref`, `_ended_before_sft` verifies the report with
+  `_verified_report` (exact version, digest, size, canonical bytes, closed shape), reads the row again,
+  requires it unchanged and qualifies once more, as the passive report read does. It projects the response
+  action into `input_admission_held`, `guardrail_intervened` or `response_received`. The status keeps the
+  `enrolled` answer and adds `run_state` `ended`, `ended_action` and `message`; the resume read returns that
+  answer where it returned `unavailable`. This is a read-time projection. It writes nothing, changes no
+  stage, pointer, ownership, lease, epoch or producer field, introduces no lifecycle state, and is no
+  completion proof for a resume. A row in stage `sft` is never read as ended: its original pointer may hold
+  the report of an early-ended original that a replacement continues. An unverifiable report or a changed
+  row gives the closed `unavailable` answer. That such a row is final rests on the worker order, as read
+  from the code: `_associate`, the only step out of stage `enrolled`, has one call site, inside the run's own
+  worker before that worker returns and retains its report. No test forces a late association.
+
 - The two normal original/journal current callbacks select `_load`'s private
   immutable exact-raw projection. LRU4 retains only validated primitive DATA:
   raw/association/context strings and an optional canonical prepared descriptor.

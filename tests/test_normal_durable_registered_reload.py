@@ -35,7 +35,7 @@ def test_normal_durable_registered_reload_has_its_own_accepted_original(monkeypa
     )
     assert (
         hashlib.sha256(Path(normal.__file__).read_bytes()).hexdigest()
-        == "42f9e8a87b9d80568b4c68f3d0c828cef97f44fe7434227c847d9281db30f830"  # pragma: allowlist secret
+        == "b8cb6f3d050965a5d74287453ab0aa9c9d0c86e1e958f5ac0782948030910ebe"  # pragma: allowlist secret
     )
     holder = SimpleNamespace(state=None, primary=None, primary_row=None, journal_frames=[], cleanup=False)
     original_model_class = f.FullGraphModel

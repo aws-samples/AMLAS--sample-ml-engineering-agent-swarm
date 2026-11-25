@@ -98,7 +98,7 @@ def _tree(tmp_path, tool_versions=("0.13.4", "0.13.4", "0.13.4")):
     (root / ".github" / "workflows" / "public-release.yml").write_text(
         f"      - run: python -m pip install --no-cache-dir uv=={tool_versions[2]}\n"
     )
-    for name in ("Dockerfile.model-acquisition", "Dockerfile.preparation"):
+    for name in ("Dockerfile.model-acquisition", "Dockerfile.preparation", "Dockerfile.qwen_sft"):
         (root / name).write_text("RUN printf '%s\\n' 'pip==26.2 --hash=sha256:00' > /app/requirements.txt\n")
     (root / "uv.lock").write_text(LOCK)
     (root / "pyproject.toml").write_text(PYPROJECT)
@@ -267,6 +267,7 @@ def test_a_pin_that_the_tool_reports_as_skipped_fails(tmp_path):
         pytest.param(".github/workflows/public-release.yml", "uv", True, id="second-pipeline"),
         pytest.param("Dockerfile.model-acquisition", "pip", True, id="model-acquisition-recipe"),
         pytest.param("Dockerfile.preparation", "pip", True, id="preparation-recipe"),
+        pytest.param("Dockerfile.qwen_sft", "pip", True, id="fine-tune-recipe"),
         pytest.param(".gitlab-ci.yml", "uv", False, id="absent-pipeline-file"),
         pytest.param("Dockerfile.preparation", "pip", False, id="absent-recipe"),
     ],

@@ -68,6 +68,8 @@ class CodingCaseReceipt(_Closed):
 
 
 _REPORT_KEY = object()
+# Outcomes that end a case without a verdict; the cause may lie outside the answer.
+NO_VERDICT_OUTCOMES = ("timeout", "infrastructure_error")
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -188,6 +190,12 @@ class CodingEvaluatorFactory:
                 raise ValueError("both arms require all164 case IDs")
             base_pass = {case for case, outcome in arms["base"].items() if outcome == "passed"}
             tuned_pass = {case for case, outcome in arms["tuned"].items() if outcome == "passed"}
+            # A case without a verdict counts as not passed. The ranges say how far such cases could move
+            # each count and the difference if every one of them had passed.
+            base_open = sum(outcome in NO_VERDICT_OUTCOMES for outcome in arms["base"].values())
+            tuned_open = sum(outcome in NO_VERDICT_OUTCOMES for outcome in arms["tuned"].values())
+            base_range = [len(base_pass), len(base_pass) + base_open]
+            tuned_range = [len(tuned_pass), len(tuned_pass) + tuned_open]
             summary = {
                 "profile_id": bound.profile_id,
                 "evaluation_id": bound.evaluation_id,
@@ -208,6 +216,9 @@ class CodingEvaluatorFactory:
                 "tuned_failure_counts": dict(
                     sorted(Counter(value for value in arms["tuned"].values() if value != "passed").items())
                 ),
+                "base_pass_count_range": base_range,
+                "tuned_pass_count_range": tuned_range,
+                "delta_pass_count_range": [tuned_range[0] - base_range[1], tuned_range[1] - base_range[0]],
                 "case_outcomes": [
                     {"case_id": case, "base": arms["base"][case], "tuned": arms["tuned"][case]}
                     for case in CASE_IDS

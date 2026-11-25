@@ -4,8 +4,8 @@
 Pin sets:
   tool-pins    the uv version named in Dockerfile, .gitlab-ci.yml and
                .github/workflows/public-release.yml (the three files must name one version)
-               and the pip version named in Dockerfile.model-acquisition and
-               Dockerfile.preparation
+               and the pip version named in Dockerfile.model-acquisition,
+               Dockerfile.preparation and Dockerfile.qwen_sft (one version)
   uv-lock-all  every package version that uv.lock takes from a package index, for all extras
   floors       the lowest version that each requirement in pyproject.toml allows
 
@@ -50,7 +50,7 @@ from pathlib import Path
 PIN_SETS = ("tool-pins", "uv-lock-all", "floors")
 TOOL_FILES = {
     "uv": ("Dockerfile", ".gitlab-ci.yml", ".github/workflows/public-release.yml"),
-    "pip": ("Dockerfile.model-acquisition", "Dockerfile.preparation"),
+    "pip": ("Dockerfile.model-acquisition", "Dockerfile.preparation", "Dockerfile.qwen_sft"),
 }
 ENTRY_FIELDS = ("id", "package", "pin_set", "reason", "expires")
 REQUIREMENT = re.compile(r"^([A-Za-z0-9_.-]+)(?:\[[^\]]*\])?\s*(?:>=|==|~=)\s*([0-9][^,;\s]*)")

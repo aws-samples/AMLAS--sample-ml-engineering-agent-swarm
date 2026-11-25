@@ -498,6 +498,8 @@ Inherits [../AGENTS.md](../AGENTS.md); this document owns the files directly in 
   installed SDK version; keep both branches while both versions are compared. Fixtures establish source
   behavior, not native guardrail classification or a deployed run.
   Since 2026-11-21, the resumed-run scenario lives in the `resumed_run` helper.
+  Since 2026-11-23, one more case pins a stop on the resumed call whose trace names only a masked entity: it is
+  reported as `guardrail_intervened` with the provider text on every allowed SDK version, and nothing is held.
   A second test replays a stop whose trace names a blocked policy.
   It requires a hold on every SDK version and a typed assessment in the report.
   Both tests exclude provider text and redaction text from the report. Waits use `LIVENESS_WAIT_SECONDS` as the
@@ -565,7 +567,66 @@ Inherits [../AGENTS.md](../AGENTS.md); this document owns the files directly in 
   It covers a resumed stop without a trace and a resumed stop with a blocked policy trace.
   It requires the held response, the retained report, and the `enrolled` record.
   It checks the report, status, and resume requests with and without resume memory.
+  [Changed 2026-11-23] The status must keep the `enrolled` answer and add `run_state` `ended`, `ended_action`
+  and `message`, 13 keys in all. The resume request must end with that same status answer.
   These requests must start no work and write nothing.
+  The no-trace expectation follows the installed SDK. The fixture covers scripted runs only.
+  It proves nothing about a deployed run.
+
+- [Added 2026-11-23] `test_normal_run_ended_status.py` covers the status and resume answers of a normal run
+  that ended before fine-tuning started. Most cases enroll a run over the neutral native ports of
+  `test_normal_run_checkpoint.py` and retain a report with a chosen response action.
+  The names-why cases require the whole status answer: the ten keys of the `enrolled` answer with their
+  values plus `run_state`, `ended_action` and `message`. They cover `input_admission_held`,
+  `guardrail_intervened`, two other actions, and a report that holds the waiting text. They also require the
+  report request to return the kept report.
+  One case sends a real prompt whose model acquisition job has failed. Its kept report ends with the waiting
+  text, and the status must still say that the run has ended with a final response.
+  The resume case requires `restoring` and then the same status answer, no `completed` state, and no entry in
+  the resume memory. The callback's parser must read the first event as before and refuse the second.
+  Seven cases require the closed `unavailable` answer when the report cannot be verified or the role is
+  refused during the read: a changed descriptor, changed bytes of the same size that are still canonical
+  JSON, a missing object, a stored shape that differs, a row that changes during the read, a role that is
+  refused after the object read, and a role that is refused only after the record read that follows the
+  object read. The last case requires that the refusal met exactly one call. It fails when the read no
+  longer qualifies the role after that record read. In none of the seven may a resume answer carry
+  `run_state`.
+  One case calls `_ended_before_sft` with a row in stage `sft` and with a row without a report and requires
+  no answer. Through the status read a row in stage `sft` never reaches that helper, so only this case fails
+  when the helper ignores the stage.
+  One case holds the worker of a real prompt after it stored its report. While the worker holds its busy
+  mark, the status must be the plain `enrolled` answer, the report request `unavailable` and the resume
+  request `original_active`. After the release the status must say ended, the report must equal the
+  `run_completed` event, and the resume request must end with the ended status.
+  One case holds the worker of a resume request for an ended run after its status read. In that moment a
+  status poll must be the plain `enrolled` answer and a report request `unavailable`. After the release the
+  resume request must end with the ended status and the next poll must say ended.
+  Five cases are controls that passed before the change: a run without a report; a row in stage `sft` with a
+  report; another session, whose resume answer must equal the answer for a run that does not exist; a
+  deployment whose approved actions lack fine-tuning, where resume ends with `failed` at `run_prepare`; and a
+  run that the original worker finished in the fine-tuning stage, on the cold fixture, whose status is
+  `available` while the job runs and `unavailable` after the run finished.
+  The fixtures cover scripted runs only. They prove nothing about native storage or a deployed run.
+  `test_normal_durable_registered_reload.py` is re-pinned for the changed bytes of `normal_run_checkpoint.py`.
+- [Added 2026-11-23] `test_held_report_guardrail_assessment.py` uses scripted prompt runs and the SDK's real
+  `BedrockModel` over a stub client that replays one guardrail stop.
+  It covers a stop on the first model call and on the call after a tool cycle, each with a blocked policy trace
+  on the input side and on the output side, and a hold from another cause after an earlier call carried a trace.
+  It requires the held response with the fixed text, no intervention outcome, and the assessment records in the
+  report data. One case reads the stored report through the runtime entry and a durable run record.
+  Keep one case for each hold return that passes the assessment: the binding refusal after the run and the
+  pause-result refusal each have their own.
+  Two fixtures have the shape that one stopped call and one unstopped call of the model service returned, with
+  every model text and matched text replaced and every number set to 1: the personal-data policy has no
+  `regexes` key, and each trace holds an input assessment with only details and metrics. Keep the case that
+  reads that policy alone: it fails when a missing list, a list that is not empty or a value that is not a
+  list is read as complete coverage.
+  Two cases pin that a stop whose trace names only a masked entity is not held on either call.
+  Three more cases take such a stop through the runtime entry and a durable run record, on the first
+  model call, on a call after a tool cycle and on the call that resumes the run: the run has ended, a
+  later report request returns the kept report, the status and resume requests start no work, and the
+  same prompt starts a new run that leaves the first report as it was. They leave what the status and
+  resume requests answer to other tests.
   The no-trace expectation follows the installed SDK. The fixture covers scripted runs only.
   It proves nothing about a deployed run.
 
@@ -575,6 +636,96 @@ Inherits [../AGENTS.md](../AGENTS.md); this document owns the files directly in 
   The turns must complete without a guard. Ordinary text must be admitted with a guard.
   The guard-bound cases must fail if the checker's strict encode is made lenient.
   The fixture covers chat turns only. It proves nothing about a real model endpoint.
+
+- [Added 2026-11-24] `test_input_admission_supplementary_characters.py` uses a fixture with the
+  recorded native NONE answer's keys and counts for the test's 84-character sentence.
+  The tests call the checker directly without calling a native API, a model or the network.
+  A full-coverage NONE answer must admit the original text with one, two or five characters
+  outside the Basic Multilingual Plane (supplementary characters).
+  A verified masked answer for such text must be forwarded.
+  Low `guarded` counts, including in masked answers, and high, low or code-point `total` counts
+  must stay UNKNOWN with NATIVE_INVALID for supplementary text.
+  Accented and CJK text in the Basic Multilingual Plane must be admitted with unchanged receipt
+  counts.
+  Text with a lone high surrogate, a lone low surrogate or two surrogate code points must stay
+  UNKNOWN with INVALID_INPUT without a native call.
+  Five of the 16 cases must fail if the checker compares `total` with the number of code points.
+  The fixture proves nothing about a deployed guardrail, another guardrail tier or a full chat
+  turn.
+
+- [Added 2026-11-24] `test_research_result_supplementary_characters.py` runs a full chat turn
+  in the first worker with the real research tool, backend callbacks and SDK, a scripted model
+  and guard, and no provider or network calls.
+  The scripted guard returns `guardrailCoverage` in UTF-16 code units.
+  The turn with three research results holding five fetched pages that each contain one
+  supplementary character (outside the Basic Multilingual Plane) must admit all three results,
+  consume the research plan and run the ordinary tool after research.
+  The masked page must reach the agent history and model with the substitution and neither the
+  name nor the address.
+  The masked unit must count as forwarded, not as admitted source evidence, and the turn must
+  continue.
+  A prompt with a supplementary character must be admitted and the turn must continue.
+  Both short-coverage cases must hold with the fixed hold text and the research result's hold line.
+  The three admission and masking cases must fail if the checker compares the coverage total with
+  the number of code points.
+  The fixture proves nothing about a deployed guardrail, a replacement worker rereading the stored
+  masked result, or what the native service returns for text it has already masked.
+
+- [Added 2026-11-23] `test_normal_resumed_run_held.py` covers a guardrail stop in the worker that resumed a run after
+  fine-tuning. The full-run cases use the runtime entry, the full scripted fixture, and a durable run record. The
+  first worker ends while its fine-tuning job runs. A replacement resumes the run. A stub client replays one
+  guardrail stop through the SDK's real `BedrockModel`.
+  The tests cover the held end with no trace, with a trace that names a blocked policy, and with a trace of the
+  shape that one stopped call of the model service returned. Only the two cases with a trace include
+  `guardrail_assessment`. The tests require a `run_completed` event with status
+  `response_received` and action `input_admission_held`. They check the fixed sentence about earlier actions and the
+  runtime recovery record. They require `resumed_report_checkpoint_ref` and a readable report. They require the
+  first worker's `report_checkpoint_ref` to match its value before the resume request. The held report is stored
+  beside the first worker's report. A later resume in the same process answers `completed`. The status request
+  answers `unavailable`. One case stops the model call after a tool cycle that submits one generation job. The
+  held report lists no tool and names no job. The tool-cycle case also requires the status request to answer
+  `unavailable`.
+  The case with the recorded shape replays `RECORDED_STOP` of `test_held_report_guardrail_assessment.py`. Its
+  output assessment holds a blocked e-mail entity. Its personal-data policy has `piiEntities` and no `regexes`
+  key. The trace also holds an input assessment with only details and metrics. The case requires
+  `guardrail_assessment` in the held report data. Its `records` contain one record, `EMAIL_RECORD`: direction
+  `OUTPUT`, policy `PII`, category `EMAIL`, action `BLOCKED`. The `assessment_status` is `partial`. The summary
+  `action` is `UNKNOWN`. The case fails when the projection reads a personal-data policy without a `regexes`
+  key as invalid.
+  One full-run case closes the warm state inside the call before the first model call. It requires a bound
+  research binding and a warm owner as its premise. The backend check before a model call then refuses the
+  research binding qualification. It sets the hold and raises. No fence of the continuation runs.
+  The case requires the held report and `resumed_report_checkpoint_ref`. It requires the hold line
+  `AMLAS_INPUT_HOLD phase=before_model_qualification reason=callback_refused`. It requires no model call, no
+  guardrail request, and no new job. The case covers the rule that every hold set by a backend callback inside
+  a call that raises takes the held end if no fence refuses. Without the held end, the case fails because the
+  resume answers `failed`.
+  Each check case requires `resume_state` `failed`, no resumed report pointer, and no held response. Four cases
+  replace the backend, `Agent`, claim, or snapshot during the stopped call. Other cases change the system prompt,
+  remove approval, change the continuation token or status in the run record, or change that record between the two
+  checks. The last case also requires one append of the runtime recovery record.
+  Two controls use the runtime entry. A refusal to keep the report does not return `completed`. A process without
+  resume memory answers `restoring`, then `failed`.
+  The tests on the declared continuation in `test_recovery_notice.py` do not use the runtime entry.
+  They check this order: qualification, held turn, response, recovery record, qualification.
+  They require the error text `normal completion invocation refused or unresolved` for both fence refusals and
+  for a failure without a hold. One fence refuses with a changed prompt and no hold. The other refuses after a
+  callback sets a hold without raising. The held-end checks can raise another `ValueError`. A bare `ValueError`
+  cannot distinguish the closed error from those refusals. A second run does not see the first run's hold.
+  One control sets a hold in a callback and lets the call return normally. The first check on the normal path
+  refuses with `normal continuation lifetime or admission changed`. No held turn is built. Another control
+  requires an interrupt outside `Exception` to pass through unchanged when raised with a hold set.
+  Without the held end, both held-report cases, the case with the recorded shape, the tool-cycle case, and the
+  case with the backend check fail.
+  The call-order test and the case with the record change between checks also fail. The other check tests and
+  the controls pass. Each check test fails in a copy with only its check removed.
+  The failure control fails in a copy without the hold term. Both fence cases fail in a copy without the fence
+  term and in a copy without the fence mark. The normal-return control fails in a copy that also takes the held
+  end after a normal return. The interrupt control fails in a copy whose call handler catches `BaseException`.
+  Keep one test per check and one control per condition.
+  The no-trace expectation follows the installed SDK version, as in `test_bedrock_guardrail_stop_without_trace.py`.
+  The full-run cases need the full scripted fixture. It covers scripted runs only. It proves nothing about a deployed
+  run.
 
 - [Added 2026-11-21] `test_chat_llm_absent_warning.py` sets
   `amlas.tui.chat.engine._WARNED_CHAT_LLM_ABSENT` to `False`.
@@ -607,6 +758,30 @@ Inherits [../AGENTS.md](../AGENTS.md); this document owns the files directly in 
   absence contract. Dedicated actual-image red/green checks require distributions
   and importable pip/setuptools/wheel paths absent, with the fixed launcher/source
   and raw transport imports preserved. Source checks alone grant no native admission.
+
+- The fine-tune image regression in `test_qwen_sft_image_contract.py` pins the same
+  build-only installer checksum as the two sibling recipes, the size check, the
+  local-only bootstrap and this order: patched-version check, removal of the base
+  setuptools/wheel, hashed binary-only install of the training lock, `pip check`,
+  removal of pip, equality of the installed name/version pairs with the lock, then
+  absence of pip and wheel from the import path and from `PATH`. It refuses a step
+  that runs the base image's `pip` launcher and a bootstrap requirement file kept
+  under `/app`. It requires the in-build check of requirements on pip or wheel to
+  read each requirement with `packaging` and to evaluate its marker with no extra
+  selected, and it requires the training lock to pin `packaging`. It pins the
+  bootstrap step and the guard step whole: each is one chain of the named commands
+  joined by `&&` alone, and the guard program is the exact statement list, so the
+  lock side is read from the copied lock, the installed side from the installed
+  distributions, and no assertion is skipped or weakened unseen. Only the copy of
+  the repository's training lock and the guard step may name that lock, so no
+  other instruction copies or rewrites it by name. After the guard step it
+  refuses an instruction that names pip or the bootstrap stage and a new stage;
+  in any instruction it refuses `ensurepip`, a virtual environment and
+  `PYTHONOPTIMIZE`, because the standard library keeps its bundled installer wheel
+  and an optimized interpreter skips assertions. These pins and refusals read the
+  instructions with comment lines dropped. The equality, absence and requirement
+  assertions themselves run in the image build; source checks alone grant no
+  native admission.
 
 - Callback review regressions retain actual cleanup-before-clock/interface,
   close-overrun, copied-scope lifetime/thread, postInvoke-beforeRead, timeout,
@@ -1095,7 +1270,11 @@ Inherits [../AGENTS.md](../AGENTS.md); this document owns the files directly in 
 
 - test_qwen_sft_precore_diagnostics.py verifies real injected inventory/credential refusal attribution and fixed metadata/unknown codes without provider/error content. It establishes no native absence/admission.
 
-- `test_coding_arbiter.py` proves exact paired2x164 arithmetic, complete ID/oracle/execution inventories, bound source/runner/runtime/budget/model arms, closed typed data and public JSON refusal. Failure/infrastructure outcomes retain denominators; exit0/stdout are not oracle completion. The owning pure factory and private report grant no native/containment/grading-integrity/quality acceptance. Ordinary predictive graders remain unchanged.
+- `test_coding_arbiter.py` proves exact paired2x164 arithmetic, complete ID/oracle/execution inventories, bound source/runner/runtime/budget/model arms, closed typed data and public JSON refusal. Failure/infrastructure outcomes retain denominators; exit0/stdout are not oracle completion. The owning pure factory and private report grant no native/containment/grading-integrity/quality acceptance. Ordinary predictive graders remain unchanged. It pins the three range keys of the summary: `timeout` and `infrastructure_error` widen an arm's range and no other outcome does, the ranges equal the extremes over every way to resolve the cases without a verdict, and every earlier summary key keeps its value.
+- `test_paired_coding_publication.py` replays a complete fixture output through `verify_pair_result`. A rehashed evaluation whose range field was changed or dropped is refused by the summary comparison. The control passes an unchanged evaluation through the same rehash helper and requires it to verify. The exact sentences of `result_statement` are pinned for a run with no case without a verdict, for the five relations of the difference range, for ties and for ranges that touch zero, and `next_step` is pinned word for word. A result whose cleanup was not confirmed must carry neither key, shown on two unresolved fixtures beside an evaluated one.
+- `test_coding_pair_observe_projection.py` keeps the tool result of `get_coding_pair` bounded. With the three range keys and the longest statement the product can build, `result_statement` and `next_step` reach the agent unchanged and the result message stays within 24,576 bytes. The longest statement comes from a search that, for each difference of the two pass counts, takes the first value of every stretch on which a number of the text keeps its digit count and its sign. A second test compares that search with a search of every count on two small populations, where both must reach the same forms of the text, and requires the longest statement for 164 cases to be no shorter than one that a search over round numbers misses.
+- `test_paired_coding_backend.py` runs the real verifier inside the adapter on fixture outputs: an evaluated pair's `artifacts` result carries the exact `result_statement` and `next_step`, and a result whose cleanup was not confirmed carries neither.
+- `test_paired_guest_wrapper.py` parses the two remote texts that `bootstrap_code` and `value_code` build and never runs them. It requires the redirect before the answer, the restore directly before the reply, the answer's source byte for byte, the function call and the encoding of its value inside a block whose `finally` restores the stream, no module bound beyond `json`, `math` and the two private names, and no bare `os` or `sys` name. Through the neutral transport fake it requires the parent to send exactly the built texts and to send no call after a failed load in a session. It also holds the rule the redirect rests on: `_stdout` takes a reply only when it is the whole standard output, and other output before or after a load reply or a value reply ends the case as `infrastructure_error` with no further call in that session. These source tests say nothing about the remote service.
 - `test_campaign_state.py` validates DynamoDB/STS/SageMaker request shapes
   against installed botocore service models with closed offline fakes. It covers
   concurrent conditional reservation, original identity/disposition retention,
@@ -1125,7 +1304,7 @@ Inherits [../AGENTS.md](../AGENTS.md); this document owns the files directly in 
 
 - `test_coding_executor.py`, `test_coding_execution_records.py` and `test_paired_coding_runner.py` retain durable original attempt/unknown identities and the2x164 denominator. Neutral delayed transport fixtures prove actual Linux main-thread interruption at the unchanged ten-second case deadline and remaining thirty-second shared stream-close/Stop/Get cap, single-owner cleanup, close-all/deferred-final uncertainty ordering, no postdeadline delayed-writer extension, no reinvocation, setup/teardown signal-window restoration, preservation of unrelated cancellation and refusal of unsupported or conflicting signal contexts. The real ten-second neutral unknown-fsync probe measures cleanup onset before/after a bounded one-second injected delay; its10.7-second observation discriminator never changes the fixed10-second budget or grants native SLA/quality acceptance. Expiry preserves unresolved original durable prefixes, original stream close and single Stop/Get cleanup. Fixture success grants no native admission or coding-quality proof.
 
-- `test_paired_coding_runner.py` also models a flushed verdict before interpreter exit and requires zero normal process status plus EOF without killing a successful child. Neutral fixtures reject nonzero/signal exit, trailing bytes and post-verdict timeout, preserve unrelated cancellation and measure actual main-thread interruption of a mock blocking wait at the unchanged10s deadline; they spawn no subprocess or official/candidate code. Original child cleanup and the328 denominator remain required.
+- `test_paired_coding_runner.py` also models a flushed verdict before interpreter exit and requires zero normal process status plus EOF without killing a successful child. Neutral fixtures reject nonzero/signal exit, trailing bytes and post-verdict timeout, preserve unrelated cancellation and measure actual main-thread interruption of a mock blocking wait at the unchanged10s deadline; they spawn no subprocess or official/candidate code. Original child cleanup and the328 denominator remain required. The limits test replaces the runner's `BUDGETS` table and requires the watchdog seconds, the case deadline, the session timeout of the start request, the value call limit and the returned limit to follow it; two controls require the unchanged table to let two value calls pass and the adapter's table to equal the runner's with the unchanged values.
 
 - `test_oracle_launcher.py` covers the actual fixed argv/environment seam, pinned image build/copy contract and exactly four reviewed official-import file leaves while freezing the original runtime catalog. It never executes official source, the launcher or any confinement syscall. The matching Rust regression requires READ_FILE-only leaves, unchanged import-directory rights and no `_typing` grant. Rust mock and real native checks run only in the AWS account.
 
@@ -1258,7 +1437,7 @@ Inherits [../AGENTS.md](../AGENTS.md); this document owns the files directly in 
 
 - test_guardrail_outcome.py uses actual installed SDK AgentResult and the real normal api.run_prompt/ChatEngine path with an inert provider. Preserve the actual result-loss/API-action reds, unchanged reply/tool records, ASK policy, zero provider calls/retries, exact primitive reasons, legacy missing/other/non-SDK/type controls, blocked-word nonclassification and frozen UNKNOWN-assessment DATA. SDK intervention alone may reflect anonymization and must never imply BLOCKED, filter cause, native admission or permission.
 
-- test_guardrail_assessment.py proves the installed SDK normal raw-metadata callback using inert streams, original callback/event identity/count, per-turn closure, synchronized callbacks, actual API projection and unchanged five-field fallback. Preserve actual missing-capture/projector reds and completeness reds, unsupported/unknown/mixed/overflow/detected controls plus excluded-leaf sentinels. Only safe enum records survive; no real model/provider/network or protected content is collected. Source green is not native assessment cause, policy admission or ML lifecycle acceptance.
+- test_guardrail_assessment.py proves the installed SDK normal raw-metadata callback using inert streams, original callback/event identity/count, per-turn closure, synchronized callbacks, actual API projection and unchanged five-field fallback. Preserve actual missing-capture/projector reds and completeness reds, unsupported/unknown/mixed/overflow/detected controls plus excluded-leaf sentinels. Only safe enum records survive; no real model/provider/network or protected content is collected. Source green is not native assessment cause, policy admission or ML lifecycle acceptance. `test_pinned_sdk_sensitive_information_required_fields_match_closed_input_contract` pins the published service model only: the projection also reads a personal-data policy that has no `regexes` list, as partial coverage, and `test_held_report_guardrail_assessment.py` pins that reading.
 
 - `test_preparation_capabilities.py` retains missing-export/ordinary-registry/schema/read-only reds, metadata parity against the existing strict source validator, closed source/configuration queries and actual installed SDK/direct no-confirmation controls. Neutral source fixtures count zero native/payload effects and establish no dataset bytes, native admission or lifecycle proof.
 

@@ -421,3 +421,138 @@ def test_review_source_model_and_manifest_binding_drift_and_coding_ytrue_refuse(
         report(tuple(values))
     with pytest.raises(InvalidSubmissionError):
         grade(spec=spec(), y_true=["HumanEval/0"], y_pred=report())
+
+
+def _summary_with_outcomes(changes):
+    """Summary of the fixture population after the named arm and case index got another outcome."""
+    values = []
+    for receipt in receipts():
+        index = int(receipt.case_id.split("/")[1])
+        outcome = changes.get((receipt.arm, index))
+        if outcome is None:
+            values.append(receipt)
+        elif outcome == "passed":
+            values.append(
+                receipt.model_copy(update={"outcome": "passed", "oracle_completed": True, "exit_code": 0})
+            )
+        elif outcome == "failed":
+            values.append(
+                receipt.model_copy(update={"outcome": "failed", "oracle_completed": True, "exit_code": 1})
+            )
+        else:
+            values.append(
+                receipt.model_copy(update={"outcome": outcome, "oracle_completed": False, "exit_code": None})
+            )
+    return report(tuple(values)).describe()
+
+
+@pytest.mark.parametrize("outcome", ["timeout", "infrastructure_error"])
+def test_no_verdict_outcomes_give_count_ranges_for_each_arm(outcome):
+    assert set(module().NO_VERDICT_OUTCOMES) == {"timeout", "infrastructure_error"}
+    summary = _summary_with_outcomes({("base", 0): outcome})
+    assert summary["base_pass_count"] == 79 and summary["tuned_pass_count"] == 90
+    assert summary["base_pass_count_range"] == [79, 80] and summary["tuned_pass_count_range"] == [90, 90]
+    assert summary["delta_pass_count_range"] == [10, 11]
+    # A case without a verdict still counts as not passed in the counts and the rates.
+    assert summary["base_pass_at_1"] == 79 / 164 and summary["delta_pass_at_1"] == 11 / 164
+    summary = _summary_with_outcomes({("tuned", 0): outcome})
+    assert summary["base_pass_count_range"] == [80, 80] and summary["tuned_pass_count_range"] == [89, 90]
+    assert summary["delta_pass_count_range"] == [9, 10]
+    assert summary["tuned_pass_at_1"] == 89 / 164 and summary["delta_pass_at_1"] == 9 / 164
+
+
+@pytest.mark.parametrize("outcome", ["runtime_error", "truncated", "incomplete", "syntax_error", "failed"])
+def test_outcomes_caused_by_the_answer_do_not_widen_the_range(outcome):
+    summary = _summary_with_outcomes({("base", 0): outcome, ("tuned", 1): outcome})
+    assert summary["base_pass_count"] == 79 and summary["tuned_pass_count"] == 89
+    assert summary["base_pass_count_range"] == [79, 79] and summary["tuned_pass_count_range"] == [89, 89]
+    assert summary["delta_pass_count_range"] == [10, 10]
+
+
+@pytest.mark.parametrize(
+    "changes,expected",
+    [
+        ({}, [10, 10]),
+        (
+            {
+                **{("base", i): "passed" for i in range(80, 89)},
+                ("base", 100): "timeout",
+                ("base", 101): "timeout",
+            },
+            [-1, 1],
+        ),
+        ({**{("base", i): "passed" for i in range(80, 90)}, ("tuned", 100): "timeout"}, [0, 1]),
+        ({**{("base", i): "passed" for i in range(80, 91)}, ("tuned", 100): "timeout"}, [-1, 0]),
+        ({("base", i): "passed" for i in range(80, 90)}, [0, 0]),
+        ({**{("base", i): "passed" for i in range(80, 95)}, ("tuned", 100): "timeout"}, [-5, -4]),
+        # The same case is without a verdict in both arms.
+        ({("base", 100): "infrastructure_error", ("tuned", 100): "timeout"}, [9, 11]),
+    ],
+)
+def test_delta_range_for_ties_and_for_ranges_that_touch_zero(changes, expected):
+    summary = _summary_with_outcomes(changes)
+    assert summary["delta_pass_count_range"] == expected
+    low = summary["tuned_pass_count_range"][0] - summary["base_pass_count_range"][1]
+    high = summary["tuned_pass_count_range"][1] - summary["base_pass_count_range"][0]
+    assert [low, high] == expected
+    assert low <= summary["tuned_pass_count"] - summary["base_pass_count"] <= high
+
+
+def test_ranges_equal_the_extremes_over_every_way_to_resolve_the_missing_verdicts():
+    import itertools
+
+    open_cases = [("base", 3), ("base", 100), ("tuned", 3), ("tuned", 120)]
+    summary = _summary_with_outcomes(dict.fromkeys(open_cases, "timeout"))
+    seen = {"base": set(), "tuned": set(), "delta": set()}
+    for choice in itertools.product(("passed", "failed"), repeat=len(open_cases)):
+        resolved = _summary_with_outcomes(dict(zip(open_cases, choice, strict=True)))
+        seen["base"].add(resolved["base_pass_count"])
+        seen["tuned"].add(resolved["tuned_pass_count"])
+        seen["delta"].add(resolved["tuned_pass_count"] - resolved["base_pass_count"])
+    assert summary["base_pass_count_range"] == [min(seen["base"]), max(seen["base"])]
+    assert summary["tuned_pass_count_range"] == [min(seen["tuned"]), max(seen["tuned"])]
+    assert summary["delta_pass_count_range"] == [min(seen["delta"]), max(seen["delta"])]
+    assert len(seen["delta"]) == 5
+
+
+def test_range_fields_keep_every_existing_summary_key_and_value():
+    summary = report().describe()
+    added = {
+        "base_pass_count_range": [80, 80],
+        "tuned_pass_count_range": [90, 90],
+        "delta_pass_count_range": [10, 10],
+    }
+    before = {
+        "profile_id": "openai.humaneval.164.pass_at_1.v1",
+        "evaluation_id": "fixture-paired-evaluation",
+        "case_count": 164,
+        "execution_count": 328,
+        "base_pass_count": 80,
+        "tuned_pass_count": 90,
+        "base_pass_at_1": 80 / 164,
+        "tuned_pass_at_1": 90 / 164,
+        "delta_pass_at_1": 10 / 164,
+        "both_pass": 80,
+        "base_only": 0,
+        "tuned_only": 10,
+        "both_fail": 74,
+        "base_failure_counts": {"failed": 84},
+        "tuned_failure_counts": {"failed": 74},
+        "binding": binding().model_dump(),
+        "provenance_status": "declared_consistency_checked_not_authenticated",
+        "native_admission": False,
+        "containment_verified": False,
+        "grading_integrity_verified": False,
+        "quality_success": False,
+    }
+    assert set(summary) == set(before) | set(added) | {"case_outcomes"}
+    for key, value in {**before, **added}.items():
+        assert summary[key] == value, key
+    assert summary["case_outcomes"] == [
+        {
+            "case_id": f"HumanEval/{i}",
+            "base": "passed" if i < 80 else "failed",
+            "tuned": "passed" if i < 90 else "failed",
+        }
+        for i in range(164)
+    ]

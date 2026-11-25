@@ -101,6 +101,8 @@ Inherits [../AGENTS.md](../AGENTS.md); this document owns the files directly in 
   count, evidence field `files.INVOCATIONS_MANIFEST.jsonl`) in place of one ref per invocation record (added
   2026-11-12: 13,146 refs were about 6.1 MB in the conversation). The adapter and `store.observe`
   still read, verify and return every record; results without a `files` dict pass through unchanged.
+  `result_statement` and `next_step` of an evaluated pair reach the agent unchanged; with the three range keys
+  and the longest statement the tool result stays within the 24,576-byte bound of the projection test.
 
 - Normal model flow fences current campaign ownership before legacy resolution
   or alias reuse. Only the declared private model attempt error class supplies

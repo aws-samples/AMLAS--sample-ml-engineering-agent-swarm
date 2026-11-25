@@ -2201,8 +2201,47 @@ def _pending(context, client, record, table_id, qualify, policy, resume):
                 close()
 
 
+# The three keys that the status of a run that ended before fine-tuning adds to the unchanged enrolled answer.
+ENDED_STATUS_KEYS = ("run_state", "ended_action", "message")
+# What that status says, by the closed class of the retained report's action.
+_ENDED_TEXT = {
+    "input_admission_held": "This run has ended. Model input was held at the admission boundary.",
+    "guardrail_intervened": "This run has ended. A guardrail intervened.",
+    "response_received": "This run has ended with a final response.",
+}
+_ENDED_NEXT = (
+    " The final report is kept: read it with the runtime action get_prompt_report and this run_id."
+    " The run cannot be resumed. To try again, send a prompt; a new run starts from the beginning."
+)
+
+
+def _ended_before_sft(context, client, item, record, table_id, qualify):
+    """DATA only: closed facts of a run that ended with a verified retained report before any SFT association.
+
+    A row in stage `enrolled` admits no checkpoint and no continuation (`_load`), and a wake is published only
+    with the SFT association. `_associate`, the only step out of this stage, runs inside the run's own worker,
+    before that worker returns and retains its report. So nothing can continue such a row. A row in stage `sft`
+    is never read as ended here: its original pointer may hold the report of an early-ended original that a
+    replacement continues. This is a read-time projection: no stage, pointer or other record field changes, and
+    it is no completion proof for a resume.
+    """
+    if record["stage"] != "enrolled" or "report_checkpoint_ref" not in record:
+        return None
+    report = _verified_report(context, _report_binding(context, record, table_id), record, qualify)
+    if _load(context, client, table_id, qualify)[0] != item:
+        raise ValueError("normal run record changed during the ended read")
+    # The same closing qualification as the passive report read.
+    qualify()
+    action = report["response"]["action"]
+    reason = action if action in ("input_admission_held", "guardrail_intervened") else "response_received"
+    return dict(zip(ENDED_STATUS_KEYS, ("ended", reason, _ENDED_TEXT[reason] + _ENDED_NEXT), strict=True))
+
+
 def read_normal_run_status(run_id: str, session_hash: str, policy=None, resume: bool = False) -> dict:
-    """Read owned enrollment or verified pending SFT; never dispatch continuation."""
+    """Read owned enrollment, its verified end before SFT, or verified pending SFT.
+
+    Never dispatch continuation.
+    """
     unavailable = {"event": "prompt_run_status", "status": "unavailable", "run_id": run_id, "found": False}
     try:
         _refs(run_id, session_hash)
@@ -2216,7 +2255,7 @@ def read_normal_run_status(run_id: str, session_hash: str, policy=None, resume: 
         if context is None:
             return unavailable
         with _native(context) as (client, table_id, qualify, _sts):
-            _item, record = _load(context, client, table_id, qualify)
+            item, record = _load(context, client, table_id, qualify)
             if record["stage"] == "sft":
                 progress = _pending(context, client, record, table_id, qualify, policy, resume)
                 qualify()
@@ -2227,7 +2266,8 @@ def read_normal_run_status(run_id: str, session_hash: str, policy=None, resume: 
                     "found": True,
                     "progress": progress,
                 }
-        if resume:
+            ended = _ended_before_sft(context, client, item, record, table_id, qualify)
+        if resume and ended is None:
             return unavailable
         return {
             "event": "prompt_run_status",
@@ -2240,6 +2280,7 @@ def read_normal_run_status(run_id: str, session_hash: str, policy=None, resume: 
             "durable_resume": False,
             "lifecycle_verified": False,
             "quality_success": False,
+            **({} if ended is None else ended),
         }
     except Exception:
         return unavailable

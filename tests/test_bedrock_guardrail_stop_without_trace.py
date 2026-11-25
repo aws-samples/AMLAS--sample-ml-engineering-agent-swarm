@@ -7,7 +7,9 @@ version and trace mode only, so the SDK's redaction defaults apply. These tests 
 
 - an ordinary chat turn is answered as a guardrail intervention; only that turn's agent holds the redacted text;
 - the warm model continuation of a normal run is held as changed history, with the fixed hold line, whenever
-  the SDK redacts: without a trace on the newer SDK, and with a trace that names a blocked policy on every version.
+  the SDK redacts: without a trace on the newer SDK, and with a trace that names a blocked policy on every version;
+- that continuation is reported as a guardrail intervention, and nothing is held, when the trace names only a
+  masked entity: no SDK version redacts then.
 
 A stub Bedrock client replays one fixed response stream: no provider, guard or network call. The expectations
 follow the installed SDK, so the same file documents the 1.42.0 behaviour. Fixtures establish source behaviour,
@@ -59,6 +61,22 @@ BLOCKED_TRACE = {
                     ]
                 }
             }
+        }
+    }
+}
+MASKED_TRACE = {
+    "guardrail": {
+        "outputAssessments": {
+            "fixtureguardrail": [
+                {
+                    "sensitiveInformationPolicy": {
+                        "piiEntities": [
+                            {"type": "EMAIL", "match": "neutral", "action": "ANONYMIZED", "detected": True}
+                        ],
+                        "regexes": [],
+                    }
+                }
+            ]
         }
     }
 }
@@ -374,3 +392,28 @@ def test_normal_run_warm_continuation_is_held_when_a_blocked_trace_redacts_the_r
         (record["direction"], record["policy"], record["category"], record["action"])
         for record in assessment["records"]
     ] == [("INPUT", "CONTENT", "VIOLENCE", "BLOCKED")]
+
+
+def test_normal_run_warm_continuation_reports_the_intervention_when_the_trace_names_no_blocked_policy(
+    monkeypatch, tmp_path, caplog
+):
+    """A guardrail stop whose trace names only a masked entity: no SDK version redacts, so nothing is held."""
+    run = resumed_run(monkeypatch, tmp_path, caplog, trace=MASKED_TRACE, trace_mode="enabled")
+    response = run.response
+    # The SDK left the DATA message alone, and the product refused nothing.
+    assert run.added[0]["content"] == run.sent["content"]
+    assert run.hold_lines == []
+    assert run.backend._input_hold is False and run.backend._warm_closed == "guardrail_intervened"
+    # What the user sees: a plain intervention that ends with the provider's text. The continuation is closed.
+    assert response.action == "guardrail_intervened"
+    assert response.message.endswith(TEXT)
+    assert response.data["input_admission"]["status"] == "quarantined"
+    assert response.data["warm_model_continuation"] == {"disposition": "guardrail_intervened"}
+    assert response.data["guardrail_outcome"] == INTERVENTION
+    # The trace reaches the report as a typed assessment: it names the masked entity and no blocked policy.
+    assessment = response.data["guardrail_assessment"]
+    assert assessment["assessment_status"] == "complete" and assessment["action"] == "ANONYMIZED"
+    assert [
+        (record["direction"], record["policy"], record["category"], record["action"])
+        for record in assessment["records"]
+    ] == [("OUTPUT", "PII", "EMAIL", "ANONYMIZED")]

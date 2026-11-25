@@ -3,8 +3,8 @@
 A normal prompt runs through ``agent_invocation`` with the durable run record configured over strict neutral
 native ports. The run waits for its original model acquisition. The model call that resumes it goes through the
 SDK's real ``BedrockModel`` and is stopped by a guardrail (a stub client replays one fixed response stream).
-The tests pin what a client then gets: the final report, the run status, the answer to a resume request, and
-that none of these requests starts work again.
+The tests pin what a client then gets: the final report, a run status that says the run has ended and why, a
+resume request that ends with that same status, and that none of these requests starts work again.
 
 The expectations for a stop without a trace follow the installed SDK, as in
 ``test_bedrock_guardrail_stop_without_trace.py``. Fixtures establish source behaviour, not native guardrail
@@ -29,6 +29,22 @@ from amlas import app as runtime
 
 pytest_plugins = ("test_normal_run_checkpoint",)
 WRITES = {"PutItem", "UpdateItem", "PutObject"}
+# The status of a run that ended before fine-tuning: the keys of the enrolled answer and three more.
+STATUS_KEYS = {
+    "event",
+    "status",
+    "run_id",
+    "found",
+    "stage",
+    "resume_ready",
+    "data_only",
+    "durable_resume",
+    "lifecycle_verified",
+    "quality_success",
+    "run_state",
+    "ended_action",
+    "message",
+}
 
 
 async def read(payload):
@@ -129,15 +145,20 @@ def test_held_run_keeps_its_final_report_and_no_request_starts_it_again(
                         "report": terminal,
                     }
                 ]
-                # The status shows a run that cannot be resumed.
+                # The status shows a run that cannot be resumed, and says that it has ended and why.
                 status = await read({"action": "get_prompt_run_status", "run_id": run_id})
                 assert len(status) == 1 and status[0]["event"] == "prompt_run_status"
                 assert status[0]["found"] is True and status[0]["status"] == "enrolled"
                 assert status[0]["resume_ready"] is False
-                # A resume request finds nothing to continue.
+                ended = "input_admission_held" if held else "guardrail_intervened"
+                assert status[0]["run_state"] == "ended" and status[0]["ended_action"] == ended
+                assert status[0]["message"].startswith("This run has ended")
+                assert "get_prompt_report" in status[0]["message"]
+                assert set(status[0]) == STATUS_KEYS
+                # A resume request finds nothing to continue and ends with that same answer.
                 assert await read({"action": "resume_prompt_run", "run_id": run_id}) == [
                     {"event": "resume_state", "state": "restoring", "run_id": run_id},
-                    {"event": "prompt_run_status", "status": "unavailable", "run_id": run_id, "found": False},
+                    status[0],
                 ]
                 # None of the three requests called the model, submitted a job, built an agent or wrote anything.
                 assert effects() == before

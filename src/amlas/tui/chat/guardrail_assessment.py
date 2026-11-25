@@ -204,12 +204,15 @@ def project_guardrail_trace(value) -> GuardrailAssessment:
                 entries(content["filters"], direction, "CONTENT")
         if "sensitiveInformationPolicy" in item:
             pii = item["sensitiveInformationPolicy"]
-            if not _mapping(pii) or not {"piiEntities", "regexes"}.issubset(pii):
+            if not _mapping(pii) or "piiEntities" not in pii:
                 degrade("invalid")
             else:
                 if set(pii) - {"piiEntities", "regexes"}:
                     degrade("partial")
-                if "regexes" in pii and (type(pii["regexes"]) is not list or pii["regexes"]):
+                # A policy can arrive without ``regexes``: the model service returned that form for a
+                # guardrail that has no regular-expression rule. The entities are still read; the
+                # missing list leaves the coverage open, so the status is partial.
+                if type(pii.get("regexes")) is not list or pii["regexes"]:
                     degrade("partial")
                 entries(pii["piiEntities"], direction, "PII")
         if len(records) == prior_count:

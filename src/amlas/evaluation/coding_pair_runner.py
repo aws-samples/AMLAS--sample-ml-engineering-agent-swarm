@@ -32,6 +32,8 @@ from .coding_oracle import decode
 from .coding_oracle_catalog import verify_pinned_case
 
 INTERPRETER_ID = "aws.codeinterpreter.v1"
+# The limits this module enforces are read from this table. The adapter holds an equal table, and both sides
+# bind its hash into the evaluation binding.
 BUDGETS = {
     "case_wall_seconds": 10,
     "session_timeout_seconds": 60,
@@ -372,6 +374,46 @@ def _wire_decode(v):
 """
 
 
+def bootstrap_code(source, entry_point):
+    """Remote load text. The answer's ordinary output goes to the null device; the reply is the only stdout.
+
+    `os` and `sys` are bound only under private names. Beyond `json` and `math` the answer finds no module
+    under its own name that it did not import, so one that uses `os` or `sys` without importing it fails
+    as before. The answer's source is embedded unchanged. A load that fails leaves the stream redirected:
+    the case ends there and the parent sends no further call in that session.
+    """
+    return (
+        "import json,math\n"
+        "import os as _amlas_os,sys as _amlas_sys\n"
+        "_amlas_out=_amlas_sys.stdout\n"
+        "_amlas_null=open(_amlas_os.devnull,'w')\n"
+        "_amlas_sys.stdout=_amlas_null\n"
+        + source
+        + "\n"
+        + _GUEST_CODEC
+        + "\n_fn="
+        + entry_point
+        + "\n_amlas_sys.stdout=_amlas_out"
+        + "\nprint(json.dumps({'ready':True}))"
+    )
+
+
+def value_code(wire, ordinal):
+    """Remote value text. The function and the encoding of its value run with the stream on the null device.
+
+    The call saves the stream it finds and puts it back in a `finally`, then prints the reply.
+    """
+    return (
+        "_a,_k=_wire_decode(json.loads("
+        + repr(wire)
+        + "))\n_amlas_out=_amlas_sys.stdout\n_amlas_sys.stdout=_amlas_null\ntry:\n"
+        + " _amlas_v=_wire_encode(_fn(*_a,**_k))\nfinally:\n _amlas_sys.stdout=_amlas_out\n"
+        + "print(json.dumps({'ordinal':"
+        + str(ordinal)
+        + ",'value':_amlas_v},sort_keys=True,allow_nan=False))"
+    )
+
+
 def _stdout(events):
     if type(events) is not tuple or len(events) != 1:
         raise ValueError("original native event population differs")
@@ -519,7 +561,7 @@ def run_paired(
                 request = {
                     "codeInterpreterIdentifier": INTERPRETER_ID,
                     "name": "amlas-pair-" + arm + "-" + str(index) + "-" + uuid.uuid4().hex[:6],
-                    "sessionTimeoutSeconds": 60,
+                    "sessionTimeoutSeconds": BUDGETS["session_timeout_seconds"],
                     "clientToken": str(uuid.uuid4()),
                 }
                 records.write(
@@ -542,14 +584,14 @@ def run_paired(
                         raise ValueError("original allocation identity unresolved")
                     session_id = response["sessionId"]
                     records.write("start-accepted", {"session_id": session_id})
-                    deadline = clock() + 10
+                    deadline = clock() + BUDGETS["case_wall_seconds"]
 
                     def expire(_event=deadline_hit):
                         # Observation only: no SDK or record effect runs on a timer thread.
                         _event.set()
 
                     with absolute_deadline(deadline, clock=clock):
-                        watchdog = timer_factory(10, expire)
+                        watchdog = timer_factory(BUDGETS["case_wall_seconds"], expire)
                         watchdog.daemon = True
                         watchdog.start()
                         if deadline_hit.is_set():
@@ -591,15 +633,7 @@ def run_paired(
                                 value, stdout_hash = _stdout(events)
                                 return value
 
-                            bootstrap = (
-                                "import json,math\n"
-                                + row["source"]
-                                + "\n"
-                                + _GUEST_CODEC
-                                + "\n_fn="
-                                + case["prompt"]["entry_point"]
-                                + "\nprint(json.dumps({'ready':True}))"
-                            )
+                            bootstrap = bootstrap_code(row["source"], case["prompt"]["entry_point"])
                             if invoke(bootstrap) != {"ready": True}:
                                 raise ValueError("original candidate bootstrap incomplete")
 
@@ -608,19 +642,12 @@ def run_paired(
 
                                 _state["ordinal"] += 1
                                 ordinal = _state["ordinal"]
-                                if ordinal > 512 or clock() >= _deadline:
+                                if ordinal > BUDGETS["max_value_calls"] or clock() >= _deadline:
                                     raise TimeoutError("original fixed case budget elapsed")
                                 wire = _canonical(encode((args, kwargs))).decode()
                                 if len(wire.encode()) > 65536:
                                     raise ValueError("fixed value request byte bound exceeded")
-                                code = (
-                                    "_a,_k=_wire_decode(json.loads("
-                                    + repr(wire)
-                                    + "))\nprint(json.dumps({'ordinal':"
-                                    + str(ordinal)
-                                    + ",'value':_wire_encode(_fn(*_a,**_k))},sort_keys=True,allow_nan=False))"
-                                )
-                                value = _invoke(code)
+                                value = _invoke(value_code(wire, ordinal))
                                 if (
                                     type(value) is not dict
                                     or set(value) != {"ordinal", "value"}
@@ -696,7 +723,7 @@ def run_paired(
     return {
         "receipts": tuple(receipts),
         "cleanup_complete": cleanup_complete,
-        "case_wall_seconds": 10,
+        "case_wall_seconds": BUDGETS["case_wall_seconds"],
         "allocation_excluded": True,
         "native_admission": False,
         "quality_success": False,

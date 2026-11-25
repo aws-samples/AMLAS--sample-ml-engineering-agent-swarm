@@ -299,6 +299,21 @@ synchronization before the approved GitHub tree is available.
   CommitPack replay/profile and its canonical preparation dependency; executable
   import tests verify the Docker-declared closure. No agent/SDK or repository code,
   arbitrary entrypoint, optimizer/RNG pickle or admission marker is included.
+  Its build-only official pip26.2 wheel is the checksum/size-pinned wheel of
+  `Dockerfile.model-acquisition` and `Dockerfile.preparation`, mounted readonly from a
+  separate stage and installed from that local file alone, without indexes/dependencies.
+  The base image's setuptools/wheel are removed first; patched pip then installs the
+  hashed binary-only training lock and runs `pip check`, and pip is removed afterward.
+  The build fails unless the installed name/version pairs equal the lock, pip and wheel
+  are neither importable nor on `PATH`, and no installed distribution has an active
+  requirement on pip or wheel; that check reads each requirement with the lock's own
+  `packaging` and evaluates its marker with no extra selected. The lock's own
+  setuptools stays and carries a vendored copy of `wheel` in its own folder, and
+  the interpreter's `ensurepip` keeps its bundled pip and setuptools wheel files;
+  the recipe test refuses an instruction that names `ensurepip` or a virtual
+  environment. The one-line bootstrap requirement file is written under `/tmp`
+  and removed in the same step, so no new file stays under `/app`. Cleanup does not
+  erase historical bytes of earlier layers or grant native admission.
 
 - `Dockerfile.inspection` builds a locked AMD64 image whose root startup executes
   only the fixed static Rust initializer. It repairs only the empty fixed output

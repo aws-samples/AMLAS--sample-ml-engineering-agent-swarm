@@ -108,7 +108,7 @@ Inherits [../AGENTS.md](../AGENTS.md); this document owns the files directly in 
 
 - `coding_generation.py` exposes bounded planning-data `bind_coding_generation_spec(yaml_text)` and opaque `submit_coding_generation`/`get_coding_generation`. The fixed recipe, resources, policy, store and native identity never enter model schemas. Fresh typed policy/store arrive only in SDK invocation_state. A spec reference conveys planning data, never execution approval; generated outputs retain quality/native admission false.
 
-- `coding_pair.py` provides `resolve_coding_evaluation_spec`, `submit_coding_pair` and `get_coding_pair`. Only opaque refs and previews are public; role/image/resources, oracle code, budgets, policies and state cannot enter model schemas. Spec resolution precedes both generation arms.
+- `coding_pair.py` provides `resolve_coding_evaluation_spec`, `submit_coding_pair` and `get_coding_pair`. Only opaque refs and previews are public; role/image/resources, oracle code, budgets, policies and state cannot enter model schemas. Spec resolution precedes both generation arms. The result of `get_coding_pair` for an evaluated pair carries `result_statement` and `next_step` as result data; the input schemas are unchanged.
 
 - `list_coding_preparation_profiles` is a read-only pre-acquisition source-shape query. Only optional bounded repo/revision/filename are public; hidden exact conversation state supplies held catalog DATA. It reports configured/unconfigured/unknown and bounded missing selector names without values or AWS calls. Matching metadata does not verify bytes or native readiness; fixed unsupported sources have no fallback or replacement recommendation.
 

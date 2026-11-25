@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import re
 import threading
 
 import pytest
@@ -292,3 +293,124 @@ def test_capacity_unknown_and_refused_shapes_pass_through_unchanged(monkeypatch)
     refused = _observe(store)
     assert refused["status"] == "refused" and refused["error_type"] == "RuntimeError"
     assert "invocation_records_view" not in refused
+
+
+_RANGE_KEYS = ("base_pass_count_range", "tuned_pass_count_range", "delta_pass_count_range")
+
+
+def _counts_summary(cases, base, tuned, base_open, tuned_open):
+    """The summary keys the statement reads, from each arm's pass count and its cases without a verdict."""
+    return {
+        "case_count": cases,
+        "base_pass_count": base,
+        "tuned_pass_count": tuned,
+        "base_pass_count_range": [base, base + base_open],
+        "tuned_pass_count_range": [tuned, tuned + tuned_open],
+        "delta_pass_count_range": [tuned - base - base_open, tuned + tuned_open - base],
+    }
+
+
+def _form(text):
+    """A statement with every digit replaced by one mark: its sentences, digit counts and signs."""
+    return re.sub("[0-9]", "9", text)
+
+
+def _shape(number):
+    """What the statement keeps of a number: its digit count and its sign."""
+    return len(str(abs(number))), (number > 0) - (number < 0)
+
+
+def _stretch_starts(shapes):
+    """The positions at which a list of shapes changes, the first position included."""
+    return [index for index, shape in enumerate(shapes) if index == 0 or shape != shapes[index - 1]]
+
+
+def _statement_candidates(cases):
+    """Statements that cover every form the product builds for `cases` cases, each with its summary.
+
+    The text changes with a number only through its digit count and its sign. For each difference of the two
+    pass counts the search therefore takes the first value of every stretch on which those stay the same: for
+    the base pass count, together with the tuned count that follows from it, and for each arm's cases without a
+    verdict, together with the range end that follows from them. A lower value on the same stretch is allowed
+    wherever a higher one is, so every other choice of counts gives a text of the same form as one of these.
+    """
+    from amlas.evaluation.coding_pair import pair_result_statement
+
+    for difference in range(-cases, cases + 1):
+        lowest = max(0, -difference)
+        base_shapes = [
+            (_shape(base), _shape(base + difference))
+            for base in range(lowest, cases + 1 - max(0, difference))
+        ]
+        base_opens = _stretch_starts(
+            [(_shape(count), _shape(difference - count)) for count in range(cases + 1)]
+        )
+        tuned_opens = _stretch_starts(
+            [(_shape(count), _shape(difference + count)) for count in range(cases + 1)]
+        )
+        for base in (lowest + index for index in _stretch_starts(base_shapes)):
+            for base_open in base_opens:
+                for tuned_open in tuned_opens:
+                    if base + base_open <= cases and base + difference + tuned_open <= cases:
+                        summary = _counts_summary(cases, base, base + difference, base_open, tuned_open)
+                        yield pair_result_statement(summary), summary
+
+
+def _longest_statement(cases=164):
+    """The longest text the product builds for `cases` cases, and the summary it was built from."""
+    return max(_statement_candidates(cases), key=lambda candidate: len(candidate[0]))
+
+
+def test_pair_view_with_ranges_and_the_longest_statement_stays_bounded(packet, monkeypatch):
+    from amlas.evaluation.coding_pair import PAIR_RESULT_NEXT_STEP
+
+    statement, ranges = _longest_statement()
+    assert "so this evaluation does not settle which model is ahead" in statement
+    summary = {**_summary(), **{key: ranges[key] for key in _RANGE_KEYS}}
+
+    def evaluated(*_args, **_kwargs):
+        return {
+            "case_count": 164,
+            "success": True,
+            "evaluated": True,
+            "status": "evaluated",
+            "summary": summary,
+            "result_statement": statement,
+            "next_step": PAIR_RESULT_NEXT_STEP,
+        }
+
+    handle = submit(packet)
+    _install_records(packet, handle, REAL_RUN_RECORD_COUNT)
+    _paginate(packet[4], monkeypatch)
+    monkeypatch.setattr(module, "verify_pair_result", evaluated, raising=False)
+    result = _observe(_store(packet[0], handle))
+    assert result["evaluated"] is True, {key: result.get(key) for key in ("status", "error_type")}
+    assert result["result_statement"] == statement
+    assert (
+        result["next_step"]
+        == PAIR_RESULT_NEXT_STEP
+        == "Put result_statement into your final report unchanged."
+    )
+    assert result["summary"] == summary and all(key in result["summary"] for key in _RANGE_KEYS)
+    without = dict(result)
+    del without["result_statement"], without["next_step"]
+    assert _message_bytes(without) < _message_bytes(result) <= BUDGET, _message_bytes(result)
+
+
+def test_the_longest_statement_search_misses_no_form_of_the_statement():
+    """The search for the longest statement is compared with a plain search of every count."""
+    from amlas.evaluation.coding_pair import pair_result_statement
+
+    # With 164 cases a search over round numbers alone misses this statement; the longest is no shorter.
+    longest, _counts = _longest_statement()
+    assert len(longest) >= len(pair_result_statement(_counts_summary(164, 10, 20, 110, 100)))
+    # On populations small enough to try every count, the search reaches each form of the text and no other.
+    for cases in (11, 21):
+        every = {
+            _form(pair_result_statement(_counts_summary(cases, base, tuned, base_open, tuned_open)))
+            for base in range(cases + 1)
+            for tuned in range(cases + 1)
+            for base_open in range(cases + 1 - base)
+            for tuned_open in range(cases + 1 - tuned)
+        }
+        assert {_form(text) for text, _counts in _statement_candidates(cases)} == every, cases

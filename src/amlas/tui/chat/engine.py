@@ -945,7 +945,7 @@ class ChatEngine:
         if agent is None or type(owned) is not tuple or len(owned) != 3 or type(snapshot_raw) is not str:
             raise ValueError("claimed normal Agent is unavailable")
         context, token, qualify_original = owned
-        notice_state = {"prompt": None}
+        notice_state = {"prompt": None, "fence_refused": False}
 
         def current():
             if (
@@ -971,6 +971,7 @@ class ChatEngine:
                     raise ValueError("normal continuation Agent changed")
                 current()
             except BaseException:
+                notice_state["fence_refused"] = True
                 with backend._input_lock:
                     already_held = backend._input_hold
                     backend._input_hold = True
@@ -1003,28 +1004,68 @@ class ChatEngine:
                 agent.callback_handler = composed
             state = backend._invocation_state()
             current()
+            held = False
             try:
                 result = agent(None, invocation_state=state)
             except Exception:
-                # SDK wraps callback failures; never expose or retry its raw cause.
-                raise ValueError("normal completion invocation refused or unresolved") from None
-            current()
-            turn = AgentTurn(
-                final_text=(
-                    "Waiting for original native operations to complete."
-                    if backend._pending_pause_result(agent, result)
-                    else backend._extract_final_text(result)
-                ),
-                executions=backend._extract_qualified_normal_executions(result, agent),
-                guardrail_outcome=backend._extract_guardrail_outcome(result),
-                guardrail_assessment=capture.close(),
-                input_admission=backend._input_admission_data(),
-            )
-            current()
-            response = self._agent_turn_response(turn)
-            response = append_recovery_report(response, report_record)
-            current()
-            return response
+                # SDK wraps callback failures; never expose or retry its raw cause. An admission hook that held
+                # model input during this one invocation ends the run below; a fence refusal and every other
+                # failure stay the fixed closed error.
+                with backend._input_lock:
+                    held = backend._input_hold and not notice_state["fence_refused"]
+                if not held:
+                    raise ValueError("normal completion invocation refused or unresolved") from None
+            if not held:
+                current()
+                turn = AgentTurn(
+                    final_text=(
+                        "Waiting for original native operations to complete."
+                        if backend._pending_pause_result(agent, result)
+                        else backend._extract_final_text(result)
+                    ),
+                    executions=backend._extract_qualified_normal_executions(result, agent),
+                    guardrail_outcome=backend._extract_guardrail_outcome(result),
+                    guardrail_assessment=capture.close(),
+                    input_admission=backend._input_admission_data(),
+                )
+                current()
+                response = self._agent_turn_response(turn)
+                response = append_recovery_report(response, report_record)
+                current()
+                return response
+
+            # Held end: the hold was clear when the invocation started, an admission hook set it inside the
+            # invocation and no fence of this function refused. The run ends with the fixed held turn, as the same
+            # hold ends a run in its first worker, and nothing is invoked again.
+            def held_current():
+                # current() without two of its terms. The hold term is the reason for this branch. With a research
+                # binding bound, the research binding qualification refuses whenever a hold is set, so its other
+                # terms (process, warm owner, graph identity, research phase) are not checked here either. Without
+                # a binding it checks nothing. Lifetime, notice and the durable completion qualification (approval,
+                # original job, claimed token, run record, snapshot) stay.
+                if (
+                    self.tool_backend is not backend
+                    or self._normal_agent is not agent
+                    or self._normal_completion is not owned
+                    or self._normal_completion_snapshot != snapshot_raw
+                    or agent.system_prompt != notice_state["prompt"]
+                ):
+                    raise ValueError("normal continuation lifetime changed")
+                context.qualify_completion(
+                    token,
+                    policy=backend.approval_policy,
+                    qualify_original=qualify_original,
+                    sdk_snapshot=json.loads(snapshot_raw),
+                )
+
+            held_current()
+            # The assessment is what the guardrail capture of this invocation holds; it names no cause of the hold.
+            held_turn = backend._input_hold_turn(guardrail_assessment=capture.close())
+            held_turn.final_text += " This hold does not undo earlier actions, and any jobs already submitted may still be running."
+            held_response = self._agent_turn_response(held_turn)
+            held_response = append_recovery_report(held_response, report_record)
+            held_current()
+            return held_response
         except BaseException:
             with backend._input_lock:
                 already_held = backend._input_hold

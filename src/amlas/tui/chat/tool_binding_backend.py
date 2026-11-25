@@ -2813,7 +2813,7 @@ class ToolBindingBackend:
                 # The SDK may wrap a hook failure. The source-owned hold latch
                 # remains authoritative; never infer a guard decision from text.
                 if self._input_hold:
-                    return self._input_hold_turn()
+                    return self._input_hold_turn(guardrail_assessment=capture.close())
                 with self._warm_capture_lock:
                     if self._warm_owner is not None and self._warm_pending is not None:
                         self._warm_closed = self._warm_closed or "refused"
@@ -2837,7 +2837,7 @@ class ToolBindingBackend:
                 if not already_held:
                     _warn_input_hold("AMLAS_INPUT_HOLD phase=research_after_run reason=binding_refused")
             if self._input_hold:
-                return self._input_hold_turn()
+                return self._input_hold_turn(guardrail_assessment=capture.close())
             try:
                 paused = self._pending_pause_result(agent, result)
             except Exception:
@@ -2845,7 +2845,7 @@ class ToolBindingBackend:
                 self._input_hold = True
                 if not already_held:
                     _warn_input_hold("AMLAS_INPUT_HOLD phase=pause_result reason=pause_result_refused")
-                return self._input_hold_turn()
+                return self._input_hold_turn(guardrail_assessment=capture.close())
             if paused:
                 return AgentTurn(
                     final_text="Waiting for original native operations to complete.",

@@ -417,6 +417,59 @@ def _verify_trace(proof, binding, receipts, cleanup_complete, count):
             raise ValueError("completed oracle receipt lacks original complete invocation chain")
 
 
+PAIR_RESULT_NEXT_STEP = "Put result_statement into your final report unchanged."
+
+
+def _signed(value):
+    return "0" if value == 0 else f"{value:+d}"
+
+
+def pair_result_statement(summary):
+    """Fixed sentences for an evaluated pair; every number comes from the verified summary and the limits table."""
+    from .coding_pair_runner import BUDGETS
+
+    cases = summary["case_count"]
+    base, tuned = summary["base_pass_count"], summary["tuned_pass_count"]
+    base_open = summary["base_pass_count_range"][1] - summary["base_pass_count_range"][0]
+    tuned_open = summary["tuned_pass_count_range"][1] - summary["tuned_pass_count_range"][0]
+    low, high = summary["delta_pass_count_range"]
+    difference = f"The difference in passed cases, tuned minus base, is {_signed(tuned - base)}."
+    sentences = [f"Base passed {base} of {cases} cases.", f"Tuned passed {tuned} of {cases}."]
+    if base_open + tuned_open == 0:
+        sentences.append("No case ended without a verdict (timeout or infrastructure error).")
+        sentences.append(difference)
+    else:
+        sentences.append(
+            "Cases that ended without a verdict (timeout or infrastructure error): "
+            f"base {base_open}, tuned {tuned_open}."
+        )
+        sentences.append("They count as not passed in these totals.")
+        sentences.append(difference)
+        sentences.append(
+            "If each case without a verdict is counted either as passed or as not passed, and every other outcome "
+            f"stays as it is, that difference lies between {_signed(low)} and {_signed(high)}."
+        )
+        if high < 0:
+            sentences.append("Tuned stays behind base in that whole range.")
+        elif low > 0:
+            sentences.append("Tuned stays ahead of base in that whole range.")
+        elif low < 0 < high:
+            sentences.append(
+                "In that range tuned can be behind base, level with it or ahead of it, "
+                "so this evaluation does not settle which model is ahead."
+            )
+        elif low == 0:
+            sentences.append("In that range tuned is level with base or ahead of it; it cannot be behind.")
+        else:
+            sentences.append("In that range tuned is behind base or level with it; it cannot be ahead.")
+    sentences.append(
+        f"Each case that ran had {BUDGETS['case_wall_seconds']} seconds for its test and all of its remote calls, "
+        "counted from the moment its remote session was accepted."
+    )
+    sentences.append("Neither arm ran a case a second time.")
+    return " ".join(sentences)
+
+
 def verify_pair_result(bundle, *, binding, source_commit, invocations, trace):
     if (
         type(binding) is not CodingEvaluationBinding
@@ -513,7 +566,7 @@ def verify_pair_result(bundle, *, binding, source_commit, invocations, trace):
     ):
         raise ValueError("original complete paired evaluation summary differs")
     _verify_trace(trace, binding, receipts, evaluation["cleanup_complete"], trace_count)
-    return {
+    result = {
         "success": evaluation["cleanup_complete"],
         "evaluated": evaluation["cleanup_complete"],
         "status": "evaluated" if evaluation["cleanup_complete"] else "cleanup_unresolved",
@@ -524,6 +577,12 @@ def verify_pair_result(bundle, *, binding, source_commit, invocations, trace):
         "quality_success": False,
         "native_admission": False,
     }
+    if evaluation["cleanup_complete"] is True:
+        # Only an evaluated pair gets the sentences and the order to repeat them. A result whose cleanup was
+        # not confirmed is not a completed evaluation and carries neither.
+        result["result_statement"] = pair_result_statement(summary)
+        result["next_step"] = PAIR_RESULT_NEXT_STEP
+    return result
 
 
 def run_paired(*args, **kwargs):

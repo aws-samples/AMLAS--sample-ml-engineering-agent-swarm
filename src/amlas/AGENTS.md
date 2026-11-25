@@ -332,8 +332,10 @@ as are `resume_prompt_run` and the worker threads. Why: the first status poll af
 A `resume_prompt_run` request answers with one closed first event, emitted before any restore work:
 `{"event":"resume_state","state":S,"run_id":...}`. `S` is `restoring` (a resume-owned worker exists
 and has not started the continuation; this request started it or found it running), `continuing` (that
-worker claimed the completion and is starting the continuation), `completed` (a verified retained report
-exists, or this process finished the run), `original_active` (the run is active in this process but was
+worker claimed the completion and is starting the continuation), `completed` (this process finished the
+run, or a resume worker of this process found the original SFT job FAILED or STOPPED with its report
+retained; a retained report alone is no completion proof, see below), `original_active` (the run is active
+in this process but was
 not started by a resume), `failed_transient` or `failed` (the previous resume worker's restore ended with
 a classified error; the event then also carries `diagnostic` with exactly `restore_stage` and
 `exception_class`, both from the closed sets of the restoration warning). The request never blocks its
@@ -367,6 +369,34 @@ NOT a completion proof: the original worker also retains its pause-turn response
 that read the pointer as completion would acknowledge a wake it never continued. A late duplicate wake
 that reaches a fresh process after the run finished therefore attempts the restore, is refused by the
 completion claim (the continuation already has an owner) and answers `failed`.
+
+Status and resume of a run that ended before fine-tuning (added 2026-11-23): a row in stage `enrolled` that
+holds `report_checkpoint_ref` is a run that has ended. It has no checkpoint, no continuation and no wake, so
+nothing can continue it. `read_normal_run_status` verifies that retained report with the read that
+`get_prompt_report` uses, keeps every key and value of the `enrolled` answer (`status` `enrolled`,
+`resume_ready` false) and adds exactly three keys: `run_state` `ended`, `ended_action` (`input_admission_held`,
+`guardrail_intervened`, or `response_received` for every other response action) and `message` (the run has
+ended, the final report is kept, how to read it, how to start again). `resume_prompt_run` for such a row
+answers `restoring` and then that same `prompt_run_status` answer, where it used to end with `unavailable`.
+No `resume_state` value changes, the answer is never `completed`, and no entry stays in `_RESUME_WORKERS`, so
+every later admitted resume reads the row again. The resume path still checks the deployment's approval first: without
+the fine-tuning approval it ends with `failed` at `run_prepare`, as for every run. A report that cannot be
+verified, or a row that changes during the read, gives the closed `unavailable` answer; before, such a row
+read `enrolled`, because the status read never touched the object. A row in stage `sft` is never read this
+way, so a run that ended in or after fine-tuning reads as before. A row without a report (an active run, or a
+worker whose report could not be stored) and a prompt held before its run was enrolled (no row) also read as
+before. Nothing is written. A status poll adds the three keys only after the run's worker released its busy
+mark: `_read_prompt_run` drops them for `get_prompt_run_status` while the run id is in
+`_ACTIVE_PROMPT_REPORTS`. The worker stores its report before it releases the mark, and a report read answers
+`unavailable` until then, so `ended` never precedes a readable report. A poll in that moment gives the plain
+`enrolled` answer, or `unavailable` when the report cannot be verified just then. The mark is process-local,
+as is the busy check of the report read: a process that holds no mark for the run answers both requests
+from the stored report, so the two requests agree in every process. The resume read is not gated, because
+the resume worker holds the mark itself; while a resume request of the same ended run is being answered, a
+status poll therefore shows the plain `enrolled` answer and a report read answers `unavailable`, as under
+every busy worker. Why: such a run read `enrolled` like a live run and its resume ended with `unavailable`,
+so a caller could not tell that the run was over or where its report was. Regression:
+`tests/test_normal_run_ended_status.py`.
 
 Final report of a resumed run (added 2026-11-07): the worker of a resumed run publishes its typed report
 through `_retain_prompt_report(..., _resumed=True)` (`_prompt_worker_events(..., report_resumed=True)`), which passes

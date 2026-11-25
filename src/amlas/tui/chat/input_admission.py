@@ -424,7 +424,9 @@ class InputAdmissionChecker:
             except Exception:
                 transport = InputTransportDiagnostic()
             return decision("UNKNOWN", "TRANSPORT_UNKNOWN", transport=transport)
-        parsed = _parse_response(response, self.config, len(text))
+        # The service counts guardrailCoverage.textCharacters in UTF-16 code units. The strict
+        # UTF-8 encode above refused any surrogate code point, so this encode cannot fail.
+        parsed = _parse_response(response, self.config, len(text.encode("utf-16-le")) // 2)
         if parsed is None:
             return decision("UNKNOWN", "NATIVE_INVALID")
         action, records, masks = parsed
@@ -457,7 +459,7 @@ class InputAdmissionChecker:
         return decision("ANONYMIZED", "NATIVE_MASKED", replacement)
 
 
-def _parse_response(response, config, characters):
+def _parse_response(response, config, utf16_units):
     if not _mapping(response):
         return None
     action = response.get("action")
@@ -475,7 +477,7 @@ def _parse_response(response, config, characters):
         counts = coverage.get("textCharacters") if _mapping(coverage) else None
         if not _mapping(counts) or any(type(counts.get(k)) is not int for k in ("guarded", "total")):
             return None
-        if counts["guarded"] != counts["total"] or counts["total"] != characters:
+        if counts["guarded"] != counts["total"] or counts["total"] != utf16_units:
             return None
     assessments = response.get("assessments")
     if type(assessments) is not list or not 1 <= len(assessments) <= MAX_RECORDS:

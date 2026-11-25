@@ -508,3 +508,211 @@ def test_original_read_failure_reconciliation_trace_requires_every_attempt_and_s
         _session_chain(records[:6] + records[7:])
     with pytest.raises(ValueError):
         _session_chain([*records[:5], ("get-failed", {"session_id": "foreign"}), *records[6:]])
+
+
+def _rehash(bundle, evaluation):
+    """Rewrite EVALUATION.json and the commit's descriptor of it, so that only the changed field can refuse."""
+    bundle["EVALUATION.json"] = canonical_bytes(evaluation) + b"\n"
+    commit = json.loads(bundle["COMMITTED.json"])
+    commit["files"]["EVALUATION.json"] = {
+        "sha256": hashlib.sha256(bundle["EVALUATION.json"]).hexdigest(),
+        "byte_count": len(bundle["EVALUATION.json"]),
+        "format": "json",
+    }
+    bundle["COMMITTED.json"] = canonical_bytes(commit) + b"\n"
+    return bundle
+
+
+def test_an_unchanged_evaluation_still_verifies_after_the_rehash_helper(tmp_path):
+    published, bundle, traces, trace = complete_output(tmp_path)
+    again = _rehash(dict(bundle), json.loads(bundle["EVALUATION.json"]))
+    assert again == bundle
+    verified = verify_pair_result(
+        again, binding=binding(), source_commit="a" * 40, invocations=traces, trace=trace
+    )
+    assert verified == published
+
+
+@pytest.mark.parametrize("key", ["base_pass_count_range", "tuned_pass_count_range", "delta_pass_count_range"])
+@pytest.mark.parametrize("end", [0, 1])
+def test_rehashed_range_fields_are_refused(tmp_path, key, end):
+    _, bundle, traces, trace = complete_output(tmp_path)
+    evaluation = json.loads(bundle["EVALUATION.json"])
+    value = list(evaluation["summary"][key])
+    value[end] += 1
+    evaluation["summary"][key] = value
+    _rehash(bundle, evaluation)
+    with pytest.raises(ValueError, match="original complete paired evaluation summary differs"):
+        verify_pair_result(bundle, binding=binding(), source_commit="a" * 40, invocations=traces, trace=trace)
+
+
+def test_a_dropped_range_field_is_refused(tmp_path):
+    _, bundle, traces, trace = complete_output(tmp_path)
+    evaluation = json.loads(bundle["EVALUATION.json"])
+    assert evaluation["summary"]["delta_pass_count_range"] == [0, 0]
+    del evaluation["summary"]["delta_pass_count_range"]
+    _rehash(bundle, evaluation)
+    with pytest.raises(ValueError, match="original complete paired evaluation summary differs"):
+        verify_pair_result(bundle, binding=binding(), source_commit="a" * 40, invocations=traces, trace=trace)
+
+
+_FIRST = "Base passed {base} of 164 cases. Tuned passed {tuned} of 164. "
+_NONE = "No case ended without a verdict (timeout or infrastructure error). "
+_OPEN = (
+    "Cases that ended without a verdict (timeout or infrastructure error): base {base_open}, tuned {tuned_open}. "
+    "They count as not passed in these totals. "
+)
+_DIFFERENCE = "The difference in passed cases, tuned minus base, is {difference}. "
+_RANGE = (
+    "If each case without a verdict is counted either as passed or as not passed, and every other outcome "
+    "stays as it is, that difference lies between {low} and {high}. "
+)
+_LAST = (
+    "Each case that ran had 10 seconds for its test and all of its remote calls, counted from the moment "
+    "its remote session was accepted. Neither arm ran a case a second time."
+)
+_BEHIND = "Tuned stays behind base in that whole range. "
+_AHEAD = "Tuned stays ahead of base in that whole range. "
+_OPEN_SIGN = (
+    "In that range tuned can be behind base, level with it or ahead of it, "
+    "so this evaluation does not settle which model is ahead. "
+)
+_LEVEL_OR_AHEAD = "In that range tuned is level with base or ahead of it; it cannot be behind. "
+_BEHIND_OR_LEVEL = "In that range tuned is behind base or level with it; it cannot be ahead. "
+_NEXT_STEP = "Put result_statement into your final report unchanged."
+
+
+def _range_summary(base, tuned, base_open, tuned_open):
+    return {
+        "case_count": 164,
+        "base_pass_count": base,
+        "tuned_pass_count": tuned,
+        "base_pass_count_range": [base, base + base_open],
+        "tuned_pass_count_range": [tuned, tuned + tuned_open],
+        "delta_pass_count_range": [tuned - (base + base_open), (tuned + tuned_open) - base],
+    }
+
+
+def test_verified_result_carries_the_statement_for_a_run_without_no_verdict_cases(tmp_path):
+    published, bundle, traces, trace = complete_output(tmp_path)
+    # Fixture population: the one generated answer of each arm passes and 163 cases per arm have no answer.
+    assert published["status"] == "evaluated" and published["evaluated"] is True
+    assert published["result_statement"] == (
+        "Base passed 1 of 164 cases. Tuned passed 1 of 164. "
+        "No case ended without a verdict (timeout or infrastructure error). "
+        "The difference in passed cases, tuned minus base, is 0. "
+        "Each case that ran had 10 seconds for its test and all of its remote calls, "
+        "counted from the moment its remote session was accepted. "
+        "Neither arm ran a case a second time."
+    )
+    assert published["next_step"] == "Put result_statement into your final report unchanged."
+    verified = verify_pair_result(
+        bundle, binding=binding(), source_commit="a" * 40, invocations=traces, trace=trace
+    )
+    assert verified == published
+
+
+def test_statement_of_a_run_with_two_tuned_cases_without_a_verdict_reads_word_for_word():
+    from amlas.evaluation.coding_pair import pair_result_statement
+
+    assert pair_result_statement(_range_summary(138, 106, 0, 2)) == (
+        "Base passed 138 of 164 cases. Tuned passed 106 of 164. "
+        "Cases that ended without a verdict (timeout or infrastructure error): base 0, tuned 2. "
+        "They count as not passed in these totals. "
+        "The difference in passed cases, tuned minus base, is -32. "
+        "If each case without a verdict is counted either as passed or as not passed, and every other outcome "
+        "stays as it is, that difference lies between -32 and -30. "
+        "Tuned stays behind base in that whole range. "
+        "Each case that ran had 10 seconds for its test and all of its remote calls, "
+        "counted from the moment its remote session was accepted. "
+        "Neither arm ran a case a second time."
+    )
+
+
+@pytest.mark.parametrize(
+    "base,tuned,base_open,tuned_open,difference,low,high,relation",
+    [
+        (138, 106, 1, 2, "-32", "-33", "-30", _BEHIND),
+        (137, 107, 2, 10, "-30", "-32", "-20", _BEHIND),
+        (100, 110, 2, 1, "+10", "+8", "+11", _AHEAD),
+        (100, 101, 2, 0, "+1", "-1", "+1", _OPEN_SIGN),
+        (101, 100, 0, 2, "-1", "-1", "+1", _OPEN_SIGN),
+        # A tie in the counts with one open case in each arm.
+        (100, 100, 1, 1, "0", "-1", "+1", _OPEN_SIGN),
+        # Ranges that touch zero at one end.
+        (100, 100, 0, 1, "0", "0", "+1", _LEVEL_OR_AHEAD),
+        (100, 101, 1, 0, "+1", "0", "+1", _LEVEL_OR_AHEAD),
+        (100, 100, 1, 0, "0", "-1", "0", _BEHIND_OR_LEVEL),
+        (101, 100, 0, 1, "-1", "-1", "0", _BEHIND_OR_LEVEL),
+    ],
+)
+def test_statement_forms_with_no_verdict_cases(
+    base, tuned, base_open, tuned_open, difference, low, high, relation
+):
+    from amlas.evaluation.coding_pair import pair_result_statement
+
+    assert pair_result_statement(_range_summary(base, tuned, base_open, tuned_open)) == (
+        _FIRST.format(base=base, tuned=tuned)
+        + _OPEN.format(base_open=base_open, tuned_open=tuned_open)
+        + _DIFFERENCE.format(difference=difference)
+        + _RANGE.format(low=low, high=high)
+        + relation
+        + _LAST
+    )
+
+
+@pytest.mark.parametrize("base,tuned,difference", [(100, 101, "+1"), (100, 100, "0"), (138, 106, "-32")])
+def test_statement_without_no_verdict_cases_states_the_difference_alone(base, tuned, difference):
+    from amlas.evaluation.coding_pair import pair_result_statement
+
+    assert pair_result_statement(_range_summary(base, tuned, 0, 0)) == (
+        _FIRST.format(base=base, tuned=tuned) + _NONE + _DIFFERENCE.format(difference=difference) + _LAST
+    )
+
+
+def test_statement_takes_the_case_limit_from_the_limits_table(monkeypatch):
+    from amlas.evaluation import coding_pair_runner
+    from amlas.evaluation.coding_pair import pair_result_statement
+
+    monkeypatch.setattr(coding_pair_runner, "BUDGETS", {**coding_pair_runner.BUDGETS, "case_wall_seconds": 7})
+    assert "Each case that ran had 7 seconds for its test" in pair_result_statement(
+        _range_summary(100, 101, 0, 0)
+    )
+
+
+@pytest.mark.parametrize("shape", ["uncertain_allocation", "producer_cleanup_not_confirmed"])
+def test_an_unresolved_cleanup_carries_no_statement_and_no_next_step(tmp_path, shape):
+    published, bundle, _traces, _proof = complete_output(tmp_path)
+    assert published["status"] == "evaluated"
+    assert published["next_step"] == _NEXT_STEP and published["result_statement"].startswith(
+        "Base passed 1 of 164"
+    )
+    records = trace_records(tmp_path)
+    if shape == "uncertain_allocation":
+        start = next(
+            record
+            for path, record in records.items()
+            if path.startswith("INVOCATIONS/base/") and path.endswith("start-attempt.json")
+        )
+        records = {
+            path: record
+            for path, record in records.items()
+            if not path.startswith("INVOCATIONS/base/") or path.endswith("start-attempt.json")
+        }
+        records["INVOCATIONS/base/000/session/00000001-start-unknown.json"] = {
+            "evaluation_id": start["evaluation_id"],
+            "case_id": start["case_id"],
+            "arm": "base",
+            "client_token": start["client_token"],
+            "error_type": "TimeoutError",
+        }
+        bundle = replace_original_base_receipt(bundle, "infrastructure_error", cleanup_complete=False)
+        expected_base_range = [0, 1]
+    else:
+        bundle = original_cleanup_unresolved_bundle(bundle)
+        expected_base_range = [1, 1]
+    result = verify_original_prefix(bundle, records)
+    assert result["status"] == "cleanup_unresolved" and result["evaluated"] is result["success"] is False
+    assert result["summary"]["base_pass_count_range"] == expected_base_range
+    assert "result_statement" not in result and "next_step" not in result
+    assert set(published) - set(result) == {"result_statement", "next_step"}

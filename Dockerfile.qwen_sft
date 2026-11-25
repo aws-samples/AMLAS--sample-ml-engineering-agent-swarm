@@ -4,6 +4,9 @@ WORKDIR /build
 COPY processing_bootstrap/Cargo.toml processing_bootstrap/Cargo.lock ./
 COPY processing_bootstrap/src ./src
 RUN cargo build --release --locked --offline --features sagemaker-native-v1 --target x86_64-unknown-linux-musl
+# The exact official installer wheel is build-only; it never enters the runtime layer.
+FROM scratch AS installer-bootstrap
+ADD --checksum=sha256:931c303696af6fa3417112103b1cad26890e5a07eccb5b99783700e33f2b8aad https://files.pythonhosted.org/packages/62/36/a3aed958d60531cb442b7ab4596cda7b3621cfb916f8ae1d6769795c7dc1/pip-26.2-py3-none-any.whl /bootstrap/pip-26.2-py3-none-any.whl
 
 FROM --platform=linux/amd64 public.ecr.aws/docker/library/python:3.11-slim@sha256:db3ff2e1800a8581e2c48a27c3995339d47bdf046da21c7627accd3d51053a93
 ARG AMLAS_SOURCE_COMMIT
@@ -12,7 +15,18 @@ ENV AMLAS_SOURCE_COMMIT=$AMLAS_SOURCE_COMMIT
 RUN python -c 'import os,re; assert re.fullmatch("[a-f0-9]{40}",os.environ.get("AMLAS_SOURCE_COMMIT",""))'
 WORKDIR /app
 COPY src/amlas/training/qwen_sft.requirements.lock /app/qwen_sft.requirements.lock
-RUN pip install --no-cache-dir --only-binary=:all: --require-hashes -r /app/qwen_sft.requirements.lock && \
+RUN --mount=type=bind,from=installer-bootstrap,source=/bootstrap,target=/bootstrap,readonly \
+    python -c 'import hashlib,pathlib; raw=pathlib.Path("/bootstrap/pip-26.2-py3-none-any.whl").read_bytes(); assert len(raw)==1816475 and hashlib.sha256(raw).hexdigest()=="931c303696af6fa3417112103b1cad26890e5a07eccb5b99783700e33f2b8aad"' && \
+    printf '%s\n' 'pip==26.2 --hash=sha256:931c303696af6fa3417112103b1cad26890e5a07eccb5b99783700e33f2b8aad' > /tmp/requirements.pip-bootstrap.txt && \
+    python -m pip install --no-index --no-deps --only-binary=:all: --require-hashes --find-links=/bootstrap -r /tmp/requirements.pip-bootstrap.txt && \
+    rm /tmp/requirements.pip-bootstrap.txt && \
+    python -c 'import importlib.metadata as m; assert m.version("pip")=="26.2"; print("MODEL_BUILD_INSTALLER_VERSION=26.2")' && \
+    python -m pip uninstall --yes setuptools wheel
+# The lock brings its own setuptools. The installer leaves after the consistency check.
+RUN python -m pip install --no-cache-dir --only-binary=:all: --require-hashes -r /app/qwen_sft.requirements.lock && \
+    python -m pip check && \
+    python -m pip uninstall --yes pip && \
+    python -c 'import importlib.util as u,importlib.metadata as m,re,shutil; c=lambda n: re.sub("[-_.]+","-",n).lower(); rows=[l.split()[0].split("==") for l in open("/app/qwen_sft.requirements.lock") if l[:1].isalnum()]; got=sorted((c(d.metadata["Name"]),d.version) for d in m.distributions()); assert got==sorted((c(n),v) for n,v in rows), "installed distributions differ from the lock"; assert all(u.find_spec(n) is None for n in ("pip","wheel")), "pip or wheel is importable"; assert all(shutil.which(n) is None for n in ("pip","pip3","pip3.11","wheel")), "a pip or wheel launcher is on PATH"; from packaging.requirements import Requirement as Q; need=[q for q in (Q(r) for d in m.distributions() for r in (d.requires or [])) if c(q.name) in ("pip","wheel") and (q.marker is None or q.marker.evaluate({"extra":""}))]; assert not need, "an installed distribution requires pip or wheel"; print("QWEN_SFT_INSTALLED_EQUALS_LOCK=%d" % len(got))' && \
     useradd --create-home --uid 10001 appuser && \
     mkdir -p /opt/ml/model && chown 10001:10001 /opt/ml/model && chmod 0700 /opt/ml/model
 COPY --from=initializer --chmod=0555 /build/target/x86_64-unknown-linux-musl/release/amlas-processing-init /usr/local/bin/amlas-processing-init

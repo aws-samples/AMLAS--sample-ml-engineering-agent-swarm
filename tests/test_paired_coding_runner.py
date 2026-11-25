@@ -830,3 +830,104 @@ def test_cleanup_never_reconciles_foreign_terminal_response(tmp_path):
         is False
     )
     assert calls == ["stop", "get"]
+
+
+class _TwoValueCalls(Oracle):
+    """An oracle fake that asks for two values and records the deadline it was given."""
+
+    def __init__(self):
+        super().__init__()
+        self.deadlines = []
+
+    def run(self, case, proxy, *, deadline, clock):
+        self.deadlines.append(deadline)
+        assert proxy(1) == ("value", {(1, 2): 3})
+        assert proxy(2) == ("value", {(1, 2): 3})
+        return {"outcome": "passed", "oracle_completed": True, "exit_code": 0}
+
+
+def _run_with_two_value_calls(root):
+    from amlas.evaluation.coding_pair_runner import run_paired as fixed_run
+
+    root.mkdir()
+    native, oracle, timers = Native(root), _TwoValueCalls(), []
+
+    class Timer:
+        def __init__(self, seconds, callback):
+            timers.append(seconds)
+
+        def start(self):
+            pass
+
+        def cancel(self):
+            pass
+
+    cases, candidates = population()
+    result = fixed_run(
+        binding=binding(),
+        cases=cases,
+        candidates=candidates,
+        client=native,
+        cleanup_client=native,
+        evidence_root=root,
+        oracle_runner=oracle,
+        clock=lambda: 1.0,
+        sleep=lambda _seconds: None,
+        timer_factory=Timer,
+    )
+    return result, native, oracle, timers
+
+
+def test_two_value_calls_pass_under_the_unchanged_limits_table(tmp_path):
+    result, native, oracle, timers = _run_with_two_value_calls(tmp_path / "run")
+    assert timers == [10, 10] and oracle.deadlines == [11.0, 11.0]
+    assert [request["sessionTimeoutSeconds"] for request in native.starts] == [60, 60]
+    assert result["case_wall_seconds"] == 10
+    assert sum(row.outcome == "passed" for row in result["receipts"]) == 2
+    assert len(native.invokes) == 6
+
+
+def test_the_enforced_limits_follow_the_budgets_table(tmp_path, monkeypatch):
+    from amlas.evaluation import coding_pair_runner as runner
+
+    monkeypatch.setattr(
+        runner,
+        "BUDGETS",
+        {**runner.BUDGETS, "case_wall_seconds": 7, "session_timeout_seconds": 45, "max_value_calls": 1},
+    )
+    result, native, oracle, timers = _run_with_two_value_calls(tmp_path / "run")
+    # The whole-case deadline, its watchdog and the returned limit follow the table.
+    assert timers == [7, 7] and oracle.deadlines == [8.0, 8.0]
+    assert result["case_wall_seconds"] == 7
+    deadlines = {
+        json.loads(path.read_bytes())["deadline"]
+        for path in (tmp_path / "run").rglob("*-attempt.json")
+        if "calls" in path.parts
+    }
+    assert deadlines == {8.0}
+    # The session request follows the table.
+    assert [request["sessionTimeoutSeconds"] for request in native.starts] == [45, 45]
+    # The call limit follows the table: the second value call is over it, is not sent and ends the case.
+    assert [row.outcome for row in result["receipts"] if row.outcome != "incomplete"] == [
+        "timeout",
+        "timeout",
+    ]
+    assert len(native.invokes) == 4
+    assert result["cleanup_complete"] is True
+
+
+def test_the_runtime_and_the_job_read_one_limits_table():
+    from amlas.backends.adapters import coding_pair as adapter
+    from amlas.evaluation import coding_pair_runner as runner
+    from amlas.training.coding_generation import canonical_bytes
+
+    assert adapter.BUDGETS == runner.BUDGETS
+    assert runner.BUDGETS == {
+        "case_wall_seconds": 10,
+        "session_timeout_seconds": 60,
+        "max_value_calls": 512,
+        "allocation_excluded": True,
+        "cleanup_seconds": 30,
+    }
+    # The values did not move, so the hash both sides bind is the one earlier results carry.
+    assert hashlib.sha256(canonical_bytes(runner.BUDGETS)).hexdigest().startswith("fe03ab7a067b")

@@ -497,11 +497,19 @@ def _read_prompt_run(payload: dict[str, Any]) -> dict[str, Any]:
         "found": False,
     }
     try:
-        from .control_plane.normal_run_checkpoint import read_normal_run_status
+        from .control_plane.normal_run_checkpoint import ENDED_STATUS_KEYS, read_normal_run_status
 
         resume = payload["action"] == "resume_prompt_run"
         policy = _runtime_prompt_policy() if resume else None
-        return read_normal_run_status(run_id, session_hash, policy=policy, resume=resume)
+        answer = read_normal_run_status(run_id, session_hash, policy=policy, resume=resume)
+        if not resume and "run_state" in answer:
+            # The worker stores its report before it releases its busy mark, and a report read answers
+            # unavailable until then. A status poll in that moment keeps the plain answer, so "ended" never
+            # precedes a readable report. A resume request is not gated: its own worker holds the mark.
+            with _PROMPT_REPORT_LOCK:
+                if run_id in _ACTIVE_PROMPT_REPORTS:
+                    answer = {key: value for key, value in answer.items() if key not in ENDED_STATUS_KEYS}
+        return answer
     except Exception:
         # Missing, foreign, malformed and unqualified records share one projection.
         return unavailable

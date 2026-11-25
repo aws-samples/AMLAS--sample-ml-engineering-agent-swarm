@@ -69,7 +69,8 @@ Inherits [../AGENTS.md](../AGENTS.md); this document owns the files directly in 
   Canonical ready DATA is materialized independently for SDK load. Current
   completion/research qualification fences every model/tool boundary and output;
   refusal keeps input hold and the attempt spent. SDK-wrapped failures become a
-  fixed closed error. No native phase grant is inferred from history. Runtime wake/report,
+  fixed closed error, except the held end described under "Held end of the continuation"
+  below. No native phase grant is inferred from history. Runtime wake/report,
   cold restoration and replacement ownership remain separate required work.
 
 - A successfully claimed normal completion may rebuild only the terminal research
@@ -184,6 +185,18 @@ Inherits [../AGENTS.md](../AGENTS.md); this document owns the files directly in 
   and callback restoration stay unchanged. Closed/late callbacks and cancellation
   cannot manufacture a response, populate another invocation or permit continuation.
 
+- An uninterrupted turn that is held after its agent call retains that turn's
+  already captured immutable GuardrailAssessment on the existing held turn in the
+  same way, at three returns of `_chat_with_tools_once`: the SDK-wrapped failure
+  with the hold latch set, the return taken when the hold latch is set after the
+  agent call returned and the pause-result refusal. A research-binding refusal
+  after the run is one cause of the second return; the latch may also have been
+  set earlier in the turn by a callback that did not raise. The assessment is turn
+  DATA and names no hold cause. Absent trace remains None; no GuardrailOutcome is
+  added, and action, message, hold line and diagnostics stay unchanged. The return
+  for an unwrapped `_InputAdmissionHeldError` is unchanged: no test pins that
+  return with a captured trace.
+
 - A trusted `qwen9b_core_v1` binding with an incomplete research phase may hand
   a complete admitted SDK tool batch to the existing original-handle warm waiter. The SDK request-state flag
   `stop_event_loop` stops only the next model cycle; every sibling result remains committed.
@@ -296,6 +309,8 @@ Inherits [../AGENTS.md](../AGENTS.md); this document owns the files directly in 
 - A real installed SDK AgentResult with exact primitive stop_reason=guardrail_intervened yields frozen GuardrailOutcome DATA. Normal chat/API preserve reply and existing tool records while exposing action=guardrail_intervened and only schema_version/stop_reason/outcome=INTERVENED/assessment_status=unavailable/action=UNKNOWN. This cannot prove BLOCKED, filter cause, success, permission or retry: PII anonymization can also intervene. Non-SDK/missing/nonprimitive/other reasons retain legacy output. No text classification, raw trace/reasoning, filtering or DRAFT change occurs.
 
 - guardrail_assessment.py projects only bounded pinned SDK content/PII enums and optional exact detected/levels into immutable DATA. Native matches/modelOutput/regex text/actionReason/reasoning/messages are never traversed, retained, serialized or logged. Unsupported policies/fields, incomplete cycles/collections, overflow, malformed/mixed/contradictory actions keep aggregate UNKNOWN. Per-turn instance callback composition chains the existing handler exactly once with unchanged events, restores it and closes capture in finally; capture is synchronized/PID-bound with no unsupported thread restriction. Reply/tool records and guardrail configuration/redaction/retry/policy remain unchanged. Optional guardrail_assessment response DATA supplements rather than changes the five-field INTERVENED fallback; no action or permission is granted.
+
+- A personal-data policy of a trace that has `piiEntities` and no `regexes` collection keeps its entity records with partial coverage, so the aggregate stays UNKNOWN. The model service returned that form for a guardrail that has no regular-expression rule; what it returns for such a rule that did not match was not observed. A policy without `piiEntities` stays invalid. A present `regexes` value that is not an empty list stays partial.
 
 - `list_coding_preparation_profiles` is registered read-only for ordinary SDK and no-confirmation direct dispatch. Direct dispatch injects original hidden state only for its declared tool name and refuses public context/private fields. Discovery reads held catalog DATA without source reads, native calls or lifecycle effects; prepare/get dispatch behavior remains unchanged.
 
@@ -717,6 +732,20 @@ or history rewrite follows from the causal comparison.
   original completion still performs its separate first-assessment retirement.
   Keep one ApplyGuardrail attempt; failed/UNKNOWN assessments are never reassessed.
 
+- The coverage check of input_admission.py reads `guardrailCoverage.textCharacters`.
+  The native service reported that count in UTF-16 code units.
+  A character outside the Basic Multilingual Plane counts as two UTF-16 code units.
+  The check requires `guarded` to equal `total`.
+  It requires `total` to equal the length of the sent text in UTF-16 code units.
+  A `total` that counts code points for text with such a character is too short.
+  Any coverage that fails the check stays UNKNOWN with NATIVE_INVALID and no forwardable body.
+  A native answer with `guardrailCoverage` absent or set to `None` is not checked or refused
+  for coverage, but every other check still applies.
+  The checker encodes the text strictly as UTF-8 before the native call, so text with a
+  surrogate code point is refused before any count is taken.
+  The receipt's `character_count` stays the number of code points.
+  The unit was recorded for one guardrail in one Region.
+
 - One instance-local AfterToolCall coordinator explicitly captures producer custody
   before checking its new projection; readonly content admission precedes planning
   capture. SDK reverse callback registration cannot reorder these internal steps.
@@ -798,3 +827,56 @@ durable record of a recovery. Regression: `tests/test_recovery_notice.py`.
   to stderr and drops INFO (the INFO line `recovery_notice_applied` reached CloudWatch 0 times in one run; `normal_callback_activity` from the
   same package at WARNING reached it 178 times). Neither line holds a term that the readback collects as a warning.
   Regression: `tests/test_recovery_report_record.py`.
+
+### Held end of the continuation (added 2026-11-23)
+
+`ChatEngine.continue_normal_completion` makes one `agent(None, ...)` call. It ends the run with the fixed held turn only
+if that call raises, an admission hook sets the input hold inside the call, and no fence refuses. `current()` runs just
+before the call and refuses a hold, so a hold seen after the call was set inside it. `fence` marks a refusal in
+`notice_state["fence_refused"]`. A fence refusal and a failure without a hold keep the closed error
+`normal completion invocation refused or unresolved`. A `BaseException` outside the `Exception` class passes through as
+before. The function makes no second call. Why: before this end existed, the invocation raised when a guardrail stopped
+a model call of the replacement worker and the product held the changed history. The resume answered `resume_state`
+`failed`, no report described the stop, and every later resume failed.
+
+The held end applies to every hold that a backend callback sets inside a call that raises if no fence refuses.
+The cause of the hold plays no part. One cause is a guardrail stop that changes the admitted history. Another
+cause is the backend check before a model call. That check is the `require_input_open` callback in `build_agent`
+in `tool_binding_backend.py`. The callback is registered when the `Agent` is built. It runs before `fence`.
+The callback can refuse the research binding qualification when the warm state closes inside the call. On that
+refusal, it sets the hold and raises. No fence runs. The model call that the check guards does not run. The run
+ends with the held report. The hold line is
+`AMLAS_INPUT_HOLD phase=before_model_qualification reason=callback_refused`. Without the held end, that resume
+answers `failed`. The first worker returns the same held turn for that refusal in `_chat_with_tools_once`. A hold
+seen after a normal return does not lead to the held end. `current()` refuses it with
+`normal continuation lifetime or admission changed`. `tests/test_normal_resumed_run_held.py` has one control per
+condition. It covers the backend refusal in a full run.
+
+The held end runs `held_current()` twice. The first pass runs before `backend._input_hold_turn` builds the held turn.
+The second runs after `append_recovery_report` adds the runtime recovery record. `held_current()` uses the checks in
+`current()` with two terms left out. It skips the hold term because the hold is what leads to this path. It also skips
+`_qualify_research_binding`. With no research binding, the helper returns at once and checks nothing. With a bound
+research binding, it refuses whenever a hold is set. Skipping the helper also skips its checks for the process, warm
+owner, graph identity, and research phase. The first worker returns its held turn at that same refusal. It uses
+`_input_hold_turn` too.
+
+Both passes still check the four lifetime identities: the backend, `Agent`, claim, and snapshot. They also check the
+system prompt that carries the restoration notice. They keep `context.qualify_completion`, which checks approval, the
+original job, the claimed token, the run record, and the snapshot. If either pass refuses, the function raises inside
+its `try`. The hold stays, and the function returns nothing. The resume answers `failed` at stage `continuation`. It
+stores no report.
+
+The held turn takes `guardrail_assessment` from this invocation's capture. The assessment records what the guardrail
+reports. It does not say what causes the hold. With a trace that names a blocked policy the held report carries it.
+Without a trace, the report has no `guardrail_assessment`. A hold rules out an execution list, so the held turn has no
+executions. Its report lists no tool and names no job. The text starts with the fixed held message. This sentence
+follows, whether or not tools run:
+`This hold does not undo earlier actions, and any jobs already submitted may still be running.`
+
+`_agent_turn_response` builds the response. The runtime recovery record follows the message, as on the normal path.
+The replacement worker stores the report under `resumed_report_checkpoint_ref` in the run record. The held end adds
+no log line, no new response action, and no run-record field.
+
+The normal path stays first in the function. Its statements stay in the same order.
+`tests/test_recovery_report_record.py::test_order_inside_continue_normal_completion` checks that order. Keep changes
+to the held end after the normal path in the source. See `tests/test_normal_resumed_run_held.py` for the tests.
