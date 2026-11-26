@@ -47,7 +47,12 @@ from .commands import (
 from .guardrail_assessment import GuardrailAssessment
 from .intent_agent import IntentAgent
 from .models import ChatMessage, ChatResponse
-from .tool_binding_backend import GuardrailOutcome, ToolBindingBackend, render_agent_turn
+from .tool_binding_backend import (
+    GuardrailOutcome,
+    ToolBindingBackend,
+    _InputAdmissionHeldError,
+    render_agent_turn,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -702,6 +707,82 @@ _JOB_KIND_LABELS: dict[str, str] = {
 }
 
 
+class _RestoreAdmissionHeldError(_InputAdmissionHeldError):
+    """A restore admission that the input check held; carries closed content-free DATA only."""
+
+    def __init__(self, data):
+        super().__init__()
+        self.data = data
+
+
+_RESTORE_BLOCK_KINDS = frozenset({"text", "toolUse", "toolResult", "reasoningContent"})
+
+
+def _restore_hold_data(receipt, boundary, position, count, message):
+    """Closed DATA of one held restore admission, or None without a verdict of that check.
+
+    Position, role and block kinds describe the message. Outcome, reason and the assessment are what the
+    receipt of the check holds. The role name is also a checked text of a stored message. No other text
+    is copied. No match, digest, identifier or tool name is copied.
+    """
+    from .input_admission import InputAdmissionReceipt
+
+    if (
+        type(receipt) is not InputAdmissionReceipt
+        or receipt.boundary != boundary
+        or receipt.outcome not in ("BLOCKED", "ANONYMIZED", "UNKNOWN")
+        or type(position) is not int
+        or type(count) is not int
+        or not 1 <= position <= count
+        or type(message) is not dict
+        or message.get("role") not in ("user", "assistant")
+        or type(message.get("content")) is not list
+    ):
+        return None
+    kinds = set()
+    for block in message["content"]:
+        kind = next(iter(block)) if type(block) is dict and len(block) == 1 else None
+        kinds.add(kind if kind in _RESTORE_BLOCK_KINDS else "other")
+    data = {
+        "schema_version": 1,
+        "data_only": True,
+        "boundary": boundary,
+        "message_position": position,
+        "message_count": count,
+        "message_role": message["role"],
+        "message_blocks": sorted(kinds),
+        "outcome": receipt.outcome,
+        "reason": receipt.reason,
+    }
+    if type(receipt.assessment) is GuardrailAssessment:
+        data["guardrail_assessment"] = receipt.assessment.to_dict()
+    return data
+
+
+def _admit_restore_input(backend, text, boundary, position, count, message, **kwargs):
+    """The restore's immutable admission of one text.
+
+    The text is the whole completion result in compact JSON or one text that the history form derives
+    from the stored message at ``position``. The wrapper preserves the text, its boundary and the call.
+    A hold for which this check writes its own receipt is raised with the closed cause of that message.
+    Every other hold is raised as it is.
+    """
+
+    def newest():
+        receipts = getattr(backend, "_input_receipts", None)
+        return receipts[-1] if type(receipts) is list and receipts else None
+
+    before = newest()
+    try:
+        return backend._admit_input(text, boundary, immutable=True, **kwargs)
+    except _InputAdmissionHeldError:
+        receipt = newest()
+        data = None if receipt is before else _restore_hold_data(receipt, boundary, position, count, message)
+        if data is None:
+            raise
+        raise _RestoreAdmissionHeldError(data) from None
+
+
 class ChatEngine:
     """Processes chat messages and routes to system actions.
 
@@ -822,6 +903,7 @@ class ChatEngine:
             _task_causal_prefix,
         )
         from ...control_plane.producer_snapshot import _approved_read
+        from .tool_binding_backend import _history_admission_texts
 
         backend = self.tool_backend
         _approved_read(backend.approval_policy)
@@ -858,19 +940,19 @@ class ChatEngine:
             }
         ]
         result = {"toolUseId": task["pending_tool_use_id"], "status": "success", "content": content}
-        backend._admit_input(
+        completed = [*prefix, {"role": "user", "content": [{"toolResult": result}]}]
+        _admit_restore_input(
+            backend,
             json.dumps(result, ensure_ascii=False, allow_nan=False, separators=(",", ":")),
             "TOOL_RESULT",
-            immutable=True,
+            len(completed),
+            len(completed),
+            completed[-1],
             tool_name=uses[0]["name"],
         )
-        completed = [*prefix, {"role": "user", "content": [{"toolResult": result}]}]
-        for message in completed:
-            backend._admit_input(
-                json.dumps(message, ensure_ascii=False, allow_nan=False, separators=(",", ":")),
-                "HISTORY_TEXT",
-                immutable=True,
-            )
+        for position, message in enumerate(completed, 1):
+            for text in _history_admission_texts(message):
+                _admit_restore_input(backend, text, "HISTORY_TEXT", position, len(completed), message)
         snapshot = copy.deepcopy(task["sdk_snapshot"])
         if _canonical(_captured_snapshot_messages(snapshot)) != _canonical(prefix):
             raise ValueError("original session snapshot prefix differs")
@@ -881,6 +963,8 @@ class ChatEngine:
     def claim_normal_completion(self, context, task):
         """Confirm first consume CAS before public load; never invoke here."""
         from strands import Snapshot
+
+        from .tool_binding_backend import _history_admission_texts
 
         backend = self.tool_backend
         snapshot = self.assemble_normal_completion(task)
@@ -895,12 +979,11 @@ class ChatEngine:
         context.qualify_completion(
             token, policy=backend.approval_policy, qualify_original=qualify_original, sdk_snapshot=snapshot
         )
-        for message in snapshot["data"]["messages"]:
-            backend._admit_input(
-                json.dumps(message, ensure_ascii=False, allow_nan=False, separators=(",", ":")),
-                "HISTORY_TEXT",
-                immutable=True,
-            )
+        for position, message in enumerate(snapshot["data"]["messages"], 1):
+            for text in _history_admission_texts(message):
+                _admit_restore_input(
+                    backend, text, "HISTORY_TEXT", position, len(snapshot["data"]["messages"]), message
+                )
         from .research_runtime_profile import _restore_runtime_research_profile
 
         if not _restore_runtime_research_profile(self, context, task, token, snapshot):
@@ -1089,6 +1172,7 @@ class ChatEngine:
             _task_causal_prefix,
         )
         from ...control_plane.producer_snapshot import _approved_read
+        from .tool_binding_backend import _history_admission_texts
 
         backend = self.tool_backend
         _approved_read(backend.approval_policy)
@@ -1099,12 +1183,9 @@ class ChatEngine:
             backend._selected_input_checker() is None and guardrail_checks_enabled()
         ):
             raise ValueError("current normal snapshot admission unavailable")
-        for message in prefix:
-            backend._admit_input(
-                json.dumps(message, ensure_ascii=False, allow_nan=False, separators=(",", ":")),
-                "HISTORY_TEXT",
-                immutable=True,
-            )
+        for position, message in enumerate(prefix, 1):
+            for text in _history_admission_texts(message):
+                _admit_restore_input(backend, text, "HISTORY_TEXT", position, len(prefix), message)
         backend._activate_research_binding()
         backend._qualify_research_binding()
         agent = backend.build_agent()

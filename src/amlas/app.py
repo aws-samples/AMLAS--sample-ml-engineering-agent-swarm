@@ -55,7 +55,9 @@ app = BedrockAgentCoreApp()
 _ACTIVE_PROMPT_REPORTS: set[str] = set()
 _PROMPT_REPORT_LOCK = threading.Lock()
 
-# Resume-owned workers, guarded by _PROMPT_REPORT_LOCK: run_id -> {"state", "diagnostic", "since"}.
+# Resume-owned workers, guarded by _PROMPT_REPORT_LOCK: run_id -> {"state", "diagnostic", "since"}. A failed
+# record of a restore that the input check held also keeps "restore_hold": the owning session hash and the
+# closed cause DATA.
 # A resume request is an idempotent state query and starter. The closed answer is
 # restoring (a resume-owned worker exists and has not started the continuation),
 # continuing (it claimed the completion and is starting the continuation), completed
@@ -195,6 +197,81 @@ def _resume_failure_event(
             "exception_class": _restore_error_category(error),
         },
     )
+
+
+def _restore_held_message(hold: dict[str, Any]) -> str:
+    """Fixed sentences for a held restore, filled only from the closed cause DATA."""
+    where = (
+        f"message {hold['message_position']} of {hold['message_count']} of the conversation being restored"
+        " before the conversation was loaded"
+    )
+    kind = f"{hold['message_role']} message"
+    if hold["message_blocks"]:
+        kind += f" with {', '.join(hold['message_blocks'])}"
+    if hold["outcome"] == "BLOCKED":
+        cause = f"The guardrail's input check blocked text in {where} ({kind})."
+    elif hold["outcome"] == "ANONYMIZED":
+        # A HISTORY_TEXT hold is on a stored message or on the completion result as the last message.
+        kept = (
+            "the completion result that the restore adds is never rewritten"
+            if hold["boundary"] == "TOOL_RESULT"
+            else "the message that contains the text is never rewritten"
+        )
+        cause = (
+            f"The guardrail's input check masked text in {where} ({kind}); the restore was held because"
+            f" {kept}."
+        )
+    else:
+        cause = f"The guardrail's input check gave no usable verdict for text in {where} ({kind}; reason {hold['reason']})."
+    sentences = ["The last restore of this run in this runtime process was held.", cause]
+    reported = []
+    for record in hold.get("guardrail_assessment", {}).get("records", []):
+        if record["action"] == "NONE":
+            continue
+        if record["policy"] == "CONTENT":
+            reported.append(
+                f"content filter {record['category']}, confidence {record['confidence']},"
+                f" action {record['action']}"
+            )
+        else:
+            reported.append(f"personal-data entity {record['category']}, action {record['action']}")
+    if reported:
+        more = f" and {len(reported) - 4} more" if len(reported) > 4 else ""
+        sentences.append("The guardrail reported: " + "; ".join(reported[:4]) + more + ".")
+    sentences.append(
+        "The hold ended nothing and discarded nothing: the fine-tuning job, its results and every stored report"
+        " are kept."
+    )
+    sentences.append(
+        "Each resume_prompt_run request that starts a restore checks the stored conversation again."
+        " The run continues only after the check passes."
+        " In this answer, restore_hold carries the same facts as data."
+    )
+    return " ".join(sentences)
+
+
+def _restore_held_answer(base: dict[str, Any], hold: Any, session_hash: str | None) -> dict[str, Any] | None:
+    """The status answer `base` with the cause of a held restore added, or None.
+
+    `hold` is what a failed resume record keeps as `restore_hold`: the session hash that owns the run and the
+    closed cause DATA. Only that session gets an answer. Only an `unavailable` or `available` status answer is
+    extended, with every key and value kept. Nothing is read or written outside this process.
+    """
+    import copy
+
+    if hold is None or hold[0] != session_hash or base.get("status") not in ("unavailable", "available"):
+        return None
+    try:
+        data = copy.deepcopy(hold[1])
+        return {
+            **base,
+            "run_state": "restore_held",
+            "message": _restore_held_message(data),
+            "restore_hold": data,
+        }
+    except Exception:
+        # A cause that cannot be rendered leaves the closed answer as it is.
+        return None
 
 
 # FIX-26 (operator directive: NO arbitrary caps on the work the system does): there is NO
@@ -509,7 +586,12 @@ def _read_prompt_run(payload: dict[str, Any]) -> dict[str, Any]:
             with _PROMPT_REPORT_LOCK:
                 if run_id in _ACTIVE_PROMPT_REPORTS:
                     answer = {key: value for key, value in answer.items() if key not in ENDED_STATUS_KEYS}
-        return answer
+        # The last restore of this run in this process, if the input check held it, names its cause here.
+        with _PROMPT_REPORT_LOCK:
+            record = _RESUME_WORKERS.get(run_id)
+            hold = record.get("restore_hold") if record is not None else None
+        held = _restore_held_answer(answer, hold, session_hash)
+        return answer if held is None else held
     except Exception:
         # Missing, foreign, malformed and unqualified records share one projection.
         return unavailable
@@ -640,14 +722,16 @@ def _warn_normal_restore_retry(stage: str, error: Exception, attempt: int) -> No
         return
 
 
-def _resume_normal_prompt_body(payload, *, continue_completed=True, on_ready=None):
+def _resume_normal_prompt_body(payload, *, continue_completed=True, on_ready=None, on_restore_held=None):
     """Restore current originals and optionally continue their admitted completion.
 
     The restore section is replayed at most three times, only for transient classes, with a
     fresh context and engine each time (every write inside it is a conditional write that
     reconciles an unknown outcome by reading the row back). The continuation is never inside
     that retry. A restore that ends in an error returns the closed `resume_state` failure
-    event; it is never reported as an unavailable-but-successful response.
+    event; it is never reported as an unavailable-but-successful response. When the input
+    check held that restore, `on_restore_held` first receives the session hash and the closed
+    cause DATA of the hold error; the returned event is the same.
     """
     from contextlib import ExitStack
 
@@ -656,7 +740,7 @@ def _resume_normal_prompt_body(payload, *, continue_completed=True, on_ready=Non
         activate_normal_run,
         prepare_normal_run,
     )
-    from .tui.chat.engine import ChatEngine
+    from .tui.chat.engine import ChatEngine, _RestoreAdmissionHeldError
 
     run_id = payload.get("run_id")
     transport_session_id, session_hash = _prompt_session_identity()
@@ -728,6 +812,8 @@ def _resume_normal_prompt_body(payload, *, continue_completed=True, on_ready=Non
                 _restore_pause(_restore_backoff(number))
                 continue
             _warn_normal_restore_failure(restore_stage, error)
+            if on_restore_held is not None and type(error) is _RestoreAdmissionHeldError:
+                on_restore_held(session_hash, error.data)
             return _resume_failure_event(run_id, restore_stage, error, transient=transient)
         break
     try:
@@ -763,7 +849,9 @@ async def _resume_normal_prompt_events(payload):
     The first event is always a closed `resume_state`, emitted before any restore work, so the
     caller's read timeout and drain deadline never decide the outcome. The restore and the
     continuation run in the worker thread under the existing ownership; the stream may end or
-    be abandoned at any time without stopping them.
+    be abandoned at any time without stopping them. A request that ends with the closed `failed`
+    state of a restore that the input check held sends one more event after it: the status
+    answer with the cause. A stream that ends with another event sends none.
     """
     run_id = payload.get("run_id")
     session_hash = _prompt_report_session_hash()
@@ -789,9 +877,19 @@ async def _resume_normal_prompt_events(payload):
                 record["state"] = "continuing"
         ready.set()
 
+    # "new": the cause of the restore that this request's worker ran, if the input check held it.
+    # "sent": the failed answer of this request and the cause that belongs to it, from that worker or from the
+    # record that answered inside the cooldown.
+    held: dict[str, Any] = {}
+
+    def note_restore_held(owner_hash, data):
+        held["new"] = (owner_hash, data)
+
     def work_body():
         return _resume_normal_prompt_body(
-            {"action": "resume_prompt_run", "run_id": run_id}, on_ready=mark_continuing
+            {"action": "resume_prompt_run", "run_id": run_id},
+            on_ready=mark_continuing,
+            on_restore_held=note_restore_held,
         )
 
     def admission(busy):
@@ -811,7 +909,9 @@ async def _resume_normal_prompt_events(payload):
                 record["state"] == "failed"
                 and _resume_clock() - record["since"] < _RESUME_FAILED_COOLDOWN_SECONDS
             ):
-                return _resume_state_event(run_id, "failed", record["diagnostic"])
+                answer = _resume_state_event(run_id, "failed", record["diagnostic"])
+                held["sent"] = (answer, record.get("restore_hold"))
+                return answer
         _RESUME_WORKERS[run_id] = {"state": "restoring", "diagnostic": None, "since": _resume_clock()}
         return None
 
@@ -841,11 +941,13 @@ async def _resume_normal_prompt_events(payload):
             if status.get("state") == "completed":
                 _RESUME_WORKERS[run_id] = {"state": "completed", "diagnostic": None, "since": now}
             else:
-                _RESUME_WORKERS[run_id] = {
-                    "state": status.get("state"),
-                    "diagnostic": status.get("diagnostic"),
-                    "since": now,
-                }
+                entry = {"state": status.get("state"), "diagnostic": status.get("diagnostic"), "since": now}
+                if "new" in held:
+                    # The input check held this restore. The cause stays beside the failed state, for the
+                    # session that owns the run, until the next restore of the run replaces the record.
+                    entry["restore_hold"] = held["new"]
+                    held["sent"] = (status, held["new"])
+                _RESUME_WORKERS[run_id] = entry
         elif status is not None or "response" not in box:
             # A pending or unqualified projection ended the worker without a continuation:
             # nothing is recorded, so the next request restores again.
@@ -853,6 +955,7 @@ async def _resume_normal_prompt_events(payload):
         else:
             _RESUME_WORKERS[run_id] = {"state": "completed", "diagnostic": None, "since": now}
 
+    last = None
     async for event in _prompt_worker_events(
         run_id,
         session_hash,
@@ -867,7 +970,22 @@ async def _resume_normal_prompt_events(payload):
         ),
         report_resumed=True,
     ):
+        last = event
         yield event
+    # Only a failed answer sets "sent", in the same locked step that decides that answer, so the cause sent here
+    # is the one of the failed answer above it, whatever a later request did to the record meanwhile. The cause
+    # follows that answer only when it is the last event this stream sent. An operator's run limit can end the
+    # stream with its own event while the worker still restores; the record then keeps the cause for the status
+    # answer and the next request.
+    failed, hold = held.get("sent", (None, None))
+    if last == failed:
+        answer = _restore_held_answer(
+            {"event": "prompt_run_status", "status": "unavailable", "run_id": run_id, "found": False},
+            hold,
+            session_hash,
+        )
+        if answer is not None:
+            yield answer
 
 
 def _retain_prompt_report(

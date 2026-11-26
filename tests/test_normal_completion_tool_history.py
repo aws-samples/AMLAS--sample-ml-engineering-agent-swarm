@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import copy
-import json
 from types import SimpleNamespace
 
 import pytest
@@ -209,7 +208,8 @@ def test_rejected_snapshot_input_cannot_load_agent_or_extract_history(monkeypatc
 
     def rejected(value, boundary, *, immutable):
         assert boundary == "HISTORY_TEXT" and immutable is True
-        assert json.loads(value) == messages[0]
+        # The first text of the first stored message: its text block.
+        assert value == messages[0]["content"][0]["text"]
         calls.append("admit")
         raise _InputAdmissionHeldError()
 

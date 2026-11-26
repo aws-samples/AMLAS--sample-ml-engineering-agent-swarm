@@ -653,6 +653,140 @@ Inherits [../AGENTS.md](../AGENTS.md); this document owns the files directly in 
   The fixture proves nothing about a deployed guardrail, another guardrail tier or a full chat
   turn.
 
+- [Added 2026-11-25] `test_history_admission_form.py` uses scripted guardrail answers in the shape
+  of the recorded answers of `test_input_admission_supplementary_characters.py`.
+  The tests call no native API, model or network. Every value is the test's own.
+  User and assistant text must reach the checker as its own characters, not as JSON.
+  A tool result content list must reach the checker as one compact JSON text, including `[]` for
+  an empty list, and no part of that list must be sent again.
+  The text that the capture path sent for a fresh tool result in a full chat turn must be
+  byte-equal to the text derived for the live agent's stored message, which keeps the tool's
+  key order, and to the text sent when that conversation is the earlier conversation of the
+  next turn.
+  A stored `json` item must be sent in the key order of the checkpoint, which sorts keys: the
+  text must be the compact JSON of the stored content list and must hold the same JSON value as
+  the text of the first check. When the tool wrote unsorted keys, the two texts must differ in
+  key order only.
+  Each machine-written value and each key of a tool call's input must be sent on its own, in the
+  stored order of the fields. Usage field names must not be sent on their own.
+  Equal texts must be sent each time they occur.
+  A block outside the known shapes must be sent whole as one compact JSON text.
+  The block-shape cases include a redacted value that is an object, a list of objects, a list of values,
+  an empty object, an empty list, and an object nested in a list inside an object beside a reasoning text
+  with a signature. Each block must be sent as exactly one compact JSON text between the texts before and
+  after it. The 5 helper cases first require the reasoning text, the signature and a single redacted
+  string to be sent on their own. When an object, a list of objects, a nested object, an empty object or
+  an empty list replaces the string, the block must be sent as one compact JSON text with no separate
+  block values, no empty string or null counted and the message unchanged.
+  A block with a single value of only white space must be sent whole, and such a value outside
+  the content must send the message whole. White space inside a tool result stays in its one text.
+  A message that cannot be walked or yields no text must be sent whole without separate part texts.
+  The 16 helper cases place each of eight extra field variants before and after the known fields.
+  The variants are a value, an object, null, an empty object, the agent SDK's `tracking_id`, a known name
+  in other letters, a known name with a space after it, and two fields.
+  Each case first requires a message with only `role`, `content` and `metadata` to be sent text by text.
+  With the extra fields, the message must be sent as exactly one compact JSON text of the whole message.
+  The plan must send no part text and count no empty string or null. The message must stay unchanged.
+  The 2 restore cases cover pending and completed restores. A scripted guardrail blocks a text that
+  contains the name of an extra field in the third stored message. Each restore must be held with a
+  `HISTORY_TEXT` receipt with outcome `BLOCKED`. The guardrail must receive every text of the first
+  two messages and then the whole third message. The conversation must stay unloaded. The restore
+  must make no completion claim. The cause of the hold must name message position 3 and the role `user`.
+  In the 1 chat-turn case, a refusal based on an extra field name in an earlier assistant message must
+  hold the turn before any model call. The guardrail must receive the question, the two texts of the
+  first earlier message and the whole second message, in that order. The caller's history must stay
+  unchanged.
+  The 2 further restore cases, pending and completed, put a reasoning block whose redacted value is an
+  object first in the second stored message, an `assistant` message. A scripted guardrail blocks a text
+  that contains the name inside that object. Each restore must be held with a `HISTORY_TEXT` receipt with
+  outcome `BLOCKED`. The guardrail must receive the two texts of the first message and then the whole
+  block. The conversation must stay unloaded. The restore must make no completion claim. The cause of the
+  hold must name message position 2 and the role `assistant`.
+  In the 1 further chat-turn case, the same block comes first in the second earlier message. The
+  guardrail must receive the question, the two texts of the first earlier message, the role name of the
+  second and then the whole block, in that order. The refusal must hold the turn before any model call
+  and leave the caller's history unchanged.
+  Values that JSON cannot carry must raise the same error class as whole-message serialization.
+  Empty strings and nulls must not be sent and must be counted. Zero and false must be sent.
+  Generated messages must yield the expected texts in order.
+  One generated message in five holds a field with a generated name and must be one whole text.
+  Each placed word and number must occur exactly once in exactly one text.
+  No derived text may be empty or larger than its whole message in compact JSON.
+  Derivation must leave the stored message unchanged, and a second derivation must return the same
+  texts.
+  A turn must complete when only the whole-message JSON of earlier history would be refused.
+  A blocked or masked text at any tested history position of a turn must hold it before a model
+  call.
+  Earlier history that JSON cannot carry must still hold with `history_not_serializable`.
+  A turn with checks disabled must not derive earlier history or call the guardrail.
+  Pending and completed restores must admit the tested histories refused only as whole-message
+  JSON: an assistant message with two signatures and two tool-call records, and a user message
+  with two tool results. A successful restore must load the stored conversation unchanged.
+  The pending restore must send the written-out 41 texts in order.
+  The completed restore must send the completion result first, then 45 texts in each history pass.
+  A block or mask at any of the 131 tested restore positions must stop admission and leave the
+  conversation unloaded. A restore held on a history text must claim completion only if the
+  refusal is in the second pass.
+  A text over the size limit must hold with `INPUT_LIMIT`.
+  A message whose compact JSON is over 65,536 UTF-8 bytes must be sent only as that one text.
+  The size cases must include two tool results that each fit, a text block of exactly 65,536
+  bytes, 6,000 empty text blocks, 9,000 short values in one tool call, and a message whose
+  character count fits the limit but whose UTF-8 byte count exceeds it.
+  A message of two tool results whose compact JSON is exactly 65,536 UTF-8 bytes must be sent
+  text by text.
+  One byte more must send the message whole.
+  `_HISTORY_MESSAGE_MAX_BYTES` must equal the checker's `MAX_INPUT_BYTES`.
+  A message that strict UTF-8 cannot encode must be sent only as its whole compact JSON text.
+  The encoding cases must cover a field name outside the content, a top-level field name, a
+  value outside the content, a text, a tool result and a key of a tool call's `input`.
+  Pending and completed restores must hold with `INPUT_LIMIT` for a stored message whose compact
+  JSON is one byte over the limit and whose two tool results each fit.
+  Both kinds of restore must succeed with that message at exactly the limit.
+  Pending and completed restores must hold with `INVALID_INPUT` for a stored message that strict
+  UTF-8 cannot encode.
+  Each size or encoding hold must follow the texts of the earlier messages, make no native call
+  for the refused message, come before any completion claim and leave the conversation unloaded.
+  A chat turn must hold with `INPUT_LIMIT` if the earlier conversation contains an oversized
+  message and with `INVALID_INPUT` if strict UTF-8 cannot encode one of its messages, both
+  before any model call.
+  A block whose kind equals `text` but is no string must not be walked as a text block: the
+  helper must raise `TypeError` as whole-message serialization does.
+  A key whose comparison raises must never be compared. A block must be sent whole when such a
+  key is its kind or a field name of a tool call, a tool result, a reasoning block or its
+  reasoning text, and a message must be sent whole when such a key is a top-level field name.
+  A tool result with a blank `status` whose content gives its items only at the first read
+  must keep them in its one whole text.
+  A restore with checks disabled must load the stored conversation without a guardrail call.
+  A latched hold must stop the restore before any check.
+  Every `HISTORY_TEXT` call in `engine.py` and `tool_binding_backend.py` must take its text from a
+  loop over `_history_admission_texts`. The source reader must refuse three other ways of
+  building that text.
+  A replacement helper's marker text must reach the checker at all four sites.
+  A stored research result must be sent once more at a restore as immutable `TOOL_RESULT` with
+  `research_fetch_urls`, in the text of its content list, byte-equal to the text of the capture
+  path and of the history check and never the JSON of the whole result.
+  Cases must fail in copies of the source that leave out one of the single values, send a text
+  block as JSON, walk a tool result leaf by leaf, skip a block of another shape, walk a known
+  block that has another field, send nothing for a message without a text, keep earlier texts
+  beside a whole message, sort the fields, send equal texts once, send or drop white space alone,
+  send an empty string or null, put one site back to the whole-message text, leave out the second
+  pass, admit a history text as changeable, or send a research result as the whole result, through
+  another serializer or as changeable.
+  Cases must fail in copies of the source that leave out the size refusal or the encoding
+  refusal of a whole message, measure characters, move the limit by one byte, keep part texts
+  beside a refused message, compare a key before its type is checked, or serialize a tool
+  result's content before the block's fallback is decided.
+  Cases must fail in copies of the source that leave out the rule for a field that the form does not know,
+  count `tracking_id` as known, compare field names without their case or outer white space, count only
+  fields with a value, or accept a message that has one known field.
+  Cases must fail in copies of the source that leave out the rule for a redacted value that is an object
+  or a list, apply it only to objects, only to lists, only to blocks without a reasoning text or only to
+  values that are not empty, or send the names inside the value one by one.
+  A redacted value of a type whose comparison raises must not be compared: the helper must raise
+  `TypeError` as whole-message serialization does. The case must fail in a copy of the source that looks
+  the type up in a tuple of types.
+  The fixtures prove nothing about deployed guardrail verdicts, deployed runs or call duration.
+
 - [Added 2026-11-24] `test_research_result_supplementary_characters.py` runs a full chat turn
   in the first worker with the real research tool, backend callbacks and SDK, a scripted model
   and guard, and no provider or network calls.
@@ -670,6 +804,159 @@ Inherits [../AGENTS.md](../AGENTS.md); this document owns the files directly in 
   the number of code points.
   The fixture proves nothing about a deployed guardrail, a replacement worker rereading the stored
   masked result, or what the native service returns for text it has already masked.
+
+- [Added 2026-11-25] `test_input_admission_repeated_value.py` scripts masked answers
+  in the shape of the recorded answers of `test_input_admission_supplementary_characters.py`,
+  with one detected entry for every reported occurrence.
+  Every value is the test's own.
+  The 12-digit number is built at run time.
+  The checker cases call the checker directly without a native API, a model or the network.
+  The file has 94 cases in 29 test functions.
+  When a value is reported twice and replaced twice, the service's own output object must be
+  forwarded.
+  When a value is present twice and replaced once, the output must be forwarded as returned,
+  with the other copy unchanged.
+  An answer with one record and every occurrence replaced must stay accepted.
+  Answers must be forwarded in cases with three to five occurrences and a mix of replaced and
+  unreplaced copies, in cases with two values of one category, and in cases with characters
+  outside the Basic Multilingual Plane before, between and after the values.
+  The order of the records must not change a decision when distinct values have different lengths.
+  Two cases report two overlapping values of equal length, with each value reported first once.
+  In each case, the answer that replaces only the value reported first must be forwarded.
+  The answer that replaces only the other value must be refused.
+  Only the first comparison reads the forwarded answers.
+  Both cases fail if the first comparison takes values of equal length in reverse record order.
+  One case fails if it orders values of equal length by their text.
+  Three answers with a value that begins with `{` must be forwarded with one record per value
+  and every copy replaced.
+  One case reports only template text that reads as an address.
+  One case reports the same template beside a value that occurs twice with one record.
+  One case reports a braced word beside another value.
+  Only the first comparison reads these three answers.
+  An answer with two overlapping values must be forwarded when only the longer value is replaced.
+  Only the first comparison reads this answer.
+  One case reports a value that is its own placeholder beside an address.
+  The answer replaces only the address and must be forwarded in either record order.
+  Only the first comparison reads it.
+  Three cases must forward answers with a value that begins at `}` in the compact JSON of a
+  content list.
+  The first case reports that value alone.
+  The second adds a value that occurs twice with one record.
+  The third has one record for each copy of the repeated value.
+  Both comparisons read the first two answers.
+  Only the second comparison reads the third answer.
+  The masked content list must still parse as one text block.
+  Refused answers must stay UNKNOWN with MASK_INVALID and supply no text.
+  Refused cases include a changed, added or dropped character; a placeholder of another category;
+  a value and a placeholder that changed places; fewer replacements than records; an absent
+  or nested value; unchanged output; no output; two outputs; outputs that are not a list;
+  an output entry that is not a mapping; output that strict UTF-8 cannot encode; and output
+  over the size limit.
+  Six more refused cases make the same text changes with one record for the value and every copy
+  replaced.
+  These cases reach the first comparison's text check.
+  The older cases have two records for the value, so the first comparison refuses them before
+  that check.
+  The added tail case fails if the first comparison accepts output that only begins with its
+  expected text.
+  The added head case fails if it accepts output that only ends with its expected text.
+  The dropped tail case fails if it accepts output that is only the start of its expected text.
+  One refused case reports a value that is its own placeholder and leaves the output unchanged.
+  It fails if the first comparison runs before the refusal of unchanged output or if that
+  refusal is removed.
+  One refused case reports a value inside another value with a third record between them.
+  It fails if either comparison checks only adjacent records for a value inside another.
+  One refused answer has a value that begins with `{` beside a repeated value with one record
+  for each copy.
+  Another refused answer has a value that begins with `{` beside a value with one copy left
+  unreplaced.
+  Neither comparison reads these two answers.
+  Both cases must fail if the second comparison tries a replacement before equal text.
+  One refused case reports an absent value beside a present value with one record.
+  Neither value has repeated records.
+  This case must fail if the first comparison no longer requires each reported value in the text.
+  In the second comparison, records that are longer in total than the text must be refused
+  before any value is searched for inside another.
+  A value that is the start or the end of another reported value must be refused whichever of the
+  two is reported first.
+  The cases cover a value reported second that is the start of another value of the same category.
+  They cover the start of a value of another category in either order.
+  They cover the end of a value of its own category in either order.
+  Each of these answers replaces every reported value once and changes nothing else.
+  In each comparison, only its rule on a value inside another value refuses it.
+  The same answer must be forwarded when the inner value is exchanged for a value that stands
+  inside no other value.
+  There is no case for a value reported first that is the start of another value of the same
+  category.
+  The second comparison refuses that answer without its rule on a value inside another value.
+  A text made up only of its reported values must be forwarded for one value and for two values
+  back to back.
+  It must also be forwarded for one value that occurs twice with a record for each copy.
+  Only the third case fails if the second comparison also refuses records whose matches are
+  as long in total as the text.
+  The first comparison reads the other two answers.
+  A generated-answers test builds 4,000 answers from a fixed seed using the test's own values
+  and words.
+  The texts hold one to four planted values of the seven default kinds.
+  The kinds are EMAIL, PHONE, NAME, US_SOCIAL_SECURITY_NUMBER, CREDIT_DEBIT_CARD_NUMBER,
+  US_BANK_ACCOUNT_NUMBER, and IP_ADDRESS.
+  Half the texts hold one of the planted values once more.
+  The texts include values that begin with or contain a brace.
+  They include values inside or across one another.
+  They include a value that is its own placeholder.
+  They include placeholder text of other kinds.
+  They include characters outside the Basic Multilingual Plane.
+  They include content lists.
+  One text in ten also holds two values of equal length across one another.
+  The records stand once for each value, once for each replaced copy, or one fewer.
+  For three answers in ten, one more change is tried: a character dropped or exchanged, a word
+  added inside, at the end or at the start, or a placeholder exchanged for another kind's.
+  The test restates both comparisons.
+  Every answer that the restated first comparison reads must be forwarded as the service's own
+  output object.
+  An answer must be forwarded exactly when either restated comparison reads it.
+  The restated second comparison must read every substitution-only edit that a complete search
+  finds, unless a reported value begins with `{`.
+  The test requires a minimum count for each class of answer.
+  The classes include answers for which the record order changes the text that the first
+  comparison expects, answers with a value that is its own placeholder, and answers with more
+  text before or after the text that the first comparison expects.
+  The test fails if the first comparison takes values of equal length out of record order.
+  It also fails if the first comparison accepts output that only begins or ends with its
+  expected text.
+  It fails if the second comparison tries a replacement before equal text.
+  A masked text of exactly 65,536 UTF-8 bytes must be forwarded with one-byte characters and with
+  two-byte characters.
+  A masked text one byte over that limit must be refused with one-byte characters and with
+  two-byte characters.
+  The refused text with two-byte characters is below the limit when counted in characters.
+  A checked text at the limit whose masked form is longer must be refused.
+  The full turns use the real backend callbacks and SDK with a scripted model and guard.
+  A read tool result, an owner prompt and a research page must each reach the model in the
+  service's masked form when they hold a repeated value.
+  The turn must continue.
+  History text with a repeated value must still hold.
+  The role name of that earlier turn must be checked first and pass with its own receipt.
+  The receipt of the masked text must read ANONYMIZED with NATIVE_MASKED.
+  With only the first comparison left, 23 of the 94 cases fail.
+  With only the second comparison left, 8 of the 94 cases fail.
+  The eight are the three forwarded cases for a value that begins with `{`, the overlapping
+  values case, the two cases with values of equal length, the case with a value that is its own
+  placeholder, and the generated-answers test.
+  Each rule of the two comparisons and each check of the output that comes before them must
+  have a case that fails when only that rule or check is removed.
+  Three rules are exceptions because other rules refuse the same answers.
+  The limit on output bytes covers the limit on output characters.
+  The rules on text left over and on the number of replacements cover the refusal of empty output.
+  In the first comparison, the rule on a value inside another value covers the refusal of two
+  records for one value.
+  The cases for unchanged output, for empty output and for a value and a placeholder that changed
+  places are refused by more than one rule.
+  Each must fail when those rules are removed together.
+  The case with a coverage count in code points is a control of the coverage check.
+  It must fail if that check compares the total with the number of code points.
+  The fixture proves nothing about what a deployed guardrail detects or about text that the
+  service has already masked.
 
 - [Added 2026-11-23] `test_normal_resumed_run_held.py` covers a guardrail stop in the worker that resumed a run after
   fine-tuning. The full-run cases use the runtime entry, the full scripted fixture, and a durable run record. The
@@ -726,6 +1013,90 @@ Inherits [../AGENTS.md](../AGENTS.md); this document owns the files directly in 
   The no-trace expectation follows the installed SDK version, as in `test_bedrock_guardrail_stop_without_trace.py`.
   The full-run cases need the full scripted fixture. It covers scripted runs only. It proves nothing about a deployed
   run.
+
+- [Added 2026-11-25] `test_normal_restore_held_cause.py` covers the status and resume answers when the
+  guardrail's input check holds the restore of a run after its worker was replaced. The scripted guardrail
+  answers have the shape of the recorded native answer.
+  The checker cases require the closed assessment beside the receipt of a blocked text and of a masked text,
+  and none beside the receipt of an admitted text. They require the serialized receipt to keep its keys, the
+  constructor to take no assessment, and a receipt rebuilt from its record to equal the original without one.
+  A projection failure must leave the decision unchanged.
+  The engine cases use the real admission and checker with an inert agent and context. They require the cause
+  for a stored message held in the pending restore, in the first history pass and in the second history pass.
+  They also require it for the completion result, for a masked message and for a check without a verdict.
+  The cases without a verdict cover a transport failure and a stored message that is one character over the
+  size limit as one text. The restore sends that message whole. They require the plain
+  hold if the hold is set before the check, if the checker selection refuses, or if another checker type
+  writes the receipt.
+  One case builds the cause directly from receipts and messages. It requires no cause for an admitted receipt,
+  another boundary, a position outside the conversation, a position that is no integer, another role, content
+  that is no list and a message that is no mapping. It requires the block kind `other` for a block outside the
+  closed kinds and no assessment of another type in the cause.
+  Two controls require each stored message to yield the texts written out in the test file, in the same order.
+  The pending restore must send exactly the 21 texts. The completed restore must send the completion result
+  first, then 25 texts in each of its two history passes.
+  The controls require `HISTORY_TEXT` for each history text and `TOOL_RESULT` for the completion result.
+  They require the tool name `submit_qwen_sft` for the completion result and `UNKNOWN` for each history text.
+  A scripted hold answers for the first text block of the stored message.
+  If the message has no text block, the hold answers for its last derived text.
+  The runtime cases use the neutral native ports of `test_normal_run_checkpoint.py` and a declared TASK. Each
+  restore gets a fresh engine with the real admission. The cases require the two closed `resume_state` events
+  and one `prompt_run_status` event with `run_state` `restore_held`, `message` and `restore_hold`. They
+  require the same status event after the `failed` answer inside the cooldown. They require the three keys on
+  an `unavailable` status answer and on an `available` status answer, and none on an `enrolled` one. They
+  require a new restore after the cooldown. They require the fixed message texts for a blocked message, a
+  masked message and a check without a verdict, and at most four reported records in the message. Each fixed
+  text must say that the check blocked, masked or gave no usable verdict for text in the message. No answer
+  may contain checked text, a matched value, guardrail output or an identifier. The cases require no write, no
+  model call and no job.
+  More runtime cases require the stream function's parser to read the first event as before and to refuse the
+  status event. A restore that passes must drop the cause. Another session must get none. A busy run must
+  answer `original_active` alone. A cause that cannot be rendered must leave the closed answers. One case
+  replaces the record between the `failed` answer of a request and the event that follows it, and requires the
+  cause of that answer in the event.
+  Four controls require the unchanged answers for a snapshot prefix that differs, a missing checkpoint, a hold
+  without a verdict and a transient error.
+  One case runs the full scripted fixture with the fit-only model. The first worker ends. The pending restore
+  is held, and the status answer of the running job adds the three keys. The job completes. The restore is
+  held again. The second request and the status answer name the same cause. The run record, every stored
+  object and the report stay unchanged. The scripted verdict then changes. The next resume continues the run
+  to its final report, and the status answers `unavailable` without the three keys.
+  The case requires the role name of the held message among the checked texts. The cause gives that role name
+  as `message_role`. No answer may hold a string of eight characters or more of the held message's content.
+  No answer may hold a checked text of eight characters or more other than the held message's role name.
+  One more case of the full scripted fixture holds the restore in its second history pass only.
+  The scripted guardrail admits one text of a stored message in the first pass and blocks the same text in
+  the second pass. The case requires the two closed `resume_state` events and the status event with the cause.
+  The held check must be the second send of that text. The sent texts must be the completion result, every
+  text of the first pass and the texts of the second pass up to the held text.
+  The run record must gain only `continuation`, in
+  the state `ready`. Every other row, every stored object, the report, the job counts and the model call
+  count must stay unchanged. A second request inside the cooldown and a status request must name the same
+  cause and write nothing. After the scripted verdict changes, the next resume must take the same claim
+  with the same token and continue the run to its final report.
+  One engine case requires the fixed message for a masked completion result, with the reason that the
+  completion result that the restore adds is never rewritten. It requires the blocked, masked and
+  no-verdict forms to name a stored message without a content block by its role alone.
+  One engine case masks the content list of the completion result in the first history pass. The result's
+  own check sends the whole result, which is another text and passes. The case requires boundary
+  `HISTORY_TEXT`, message 5 of 5, a `user` message with `toolResult`, and the fixed message with the reason
+  that the message that contains the text is never rewritten. The message must not say "stored message".
+  One engine case sends four answers that the check refuses. An answer with a policy key that the check
+  does not read gives `NATIVE_INVALID` and no assessment. A record detected with the action `NONE` gives
+  `NATIVE_INVALID` with the assessment. An answer that says the guardrail acted and names no acting
+  record gives `NATIVE_UNKNOWN` with the assessment. A masked output that holds the placeholder of a category
+  that no record reports gives `MASK_INVALID` with the assessment, and the message names the reported entity.
+  One runtime case sets the operator's run limit. The check of one text of a stored message answers only
+  after the stream has ended at the limit, and the case asks the stream for more after the restore was held. It
+  requires exactly two events: `resume_state` `restoring` and `run_completed` with status
+  `outcome_unknown`. The record must keep the cause, and the status answer and the next resume request
+  inside the cooldown must carry it.
+  The controls pass without the change. Every other case fails without it. Keep one case per condition of
+  `_restore_hold_data`, `_admit_restore_input` and `_restore_held_answer`, one for the exact error type in
+  `_resume_normal_prompt_body` and one for the comparison with the last event in
+  `_resume_normal_prompt_events`: each has a case that fails in a copy without it.
+  The fixtures cover scripted runs only. They prove nothing about native guardrail classification, native
+  storage or a deployed run.
 
 - [Added 2026-11-21] `test_chat_llm_absent_warning.py` sets
   `amlas.tui.chat.engine._WARNED_CHAT_LLM_ABSENT` to `False`.

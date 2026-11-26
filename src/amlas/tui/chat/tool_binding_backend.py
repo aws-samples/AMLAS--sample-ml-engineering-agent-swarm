@@ -185,6 +185,194 @@ def _record_messages(messages):
     ]
 
 
+def _tool_result_admission_text(content):
+    """Return the one text in which a tool result's content list reaches the input check.
+
+    A fresh result at capture, a stored result inside a history message and a stored research result at a
+    restore all go through this function, so content in the same key order is the same text at every
+    check. The key order is kept as given; a checkpoint stores every object with sorted keys.
+    """
+    return json.dumps(content, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+
+
+# One text of the input check holds at most this many UTF-8 bytes. The number is ``MAX_INPUT_BYTES`` of
+# ``input_admission.py``, a module that is loaded only when a guardrail is selected.
+_HISTORY_MESSAGE_MAX_BYTES = 65536
+
+# The fields of a stored message that the history form reads: the role, the content list and the agent SDK's
+# metadata. Field names outside the content are sent in no single text, so a message with any other field is
+# sent whole and the input check sees that name.
+_HISTORY_MESSAGE_FIELDS = frozenset({"role", "content", "metadata"})
+
+
+def _history_message_fits_one_check(serialized):
+    """True when the compact JSON of a whole stored message is a text that the input check assesses.
+
+    The input check refuses a text of more than 65,536 UTF-8 bytes, and a text that strict UTF-8 cannot
+    encode, before it asks the guardrail. A message with such a compact JSON is sent as that one text, so
+    that refusal stays, also when every part of the message would pass on its own.
+    """
+    try:
+        return len(serialized.encode("utf-8", errors="strict")) <= _HISTORY_MESSAGE_MAX_BYTES
+    except UnicodeEncodeError:
+        return False
+
+
+def _history_value_texts(value, texts, skipped, keys):
+    """Append every scalar leaf of plain JSON DATA as its own text; False for any other value.
+
+    A string is sent as it is and a number or boolean as its JSON text. An empty string and null are
+    counted in ``skipped`` and not sent. A string of only white space is no such value: the service gives
+    no verdict on it alone, so the caller sends its block or message whole. With ``keys`` every object key
+    is sent like a string value.
+    """
+    kind = type(value)
+    if kind is str:
+        if not value:
+            skipped[0] += 1
+        elif value.strip():
+            texts.append(value)
+        else:
+            return False
+    elif kind is bool:
+        texts.append("true" if value else "false")
+    elif kind is int or kind is float:
+        texts.append(json.dumps(value, allow_nan=False))
+    elif value is None:
+        skipped[1] += 1
+    elif kind is list:
+        for item in value:
+            if not _history_value_texts(item, texts, skipped, keys):
+                return False
+    elif kind is dict:
+        for key, item in value.items():
+            if type(key) is not str:
+                return False
+            if keys and not _history_value_texts(key, texts, skipped, False):
+                return False
+            if not _history_value_texts(item, texts, skipped, keys):
+                return False
+    else:
+        return False
+    return True
+
+
+def _history_block_texts(block, texts, skipped):
+    """Append the texts of one content block of a known closed shape; False for any other block.
+
+    A key is compared only when it is exactly a string, and a tool result decides to go whole before
+    its content list is serialized.
+    """
+    if type(block) is not dict or len(block) != 1:
+        return False
+    ((kind, body),) = block.items()
+    # A key is compared only when it is exactly a string; any other key sends the block whole.
+    if type(kind) is not str:
+        return False
+    if kind == "text":
+        return type(body) is str and _history_value_texts(body, texts, skipped, False)
+    if type(body) is not dict or not all(type(key) is str for key in body):
+        return False
+    if kind == "toolUse":
+        # The call id, the tool name and every key and scalar leaf of the input, each on its own.
+        return (
+            set(body) == {"toolUseId", "name", "input"}
+            and type(body["toolUseId"]) is str
+            and type(body["name"]) is str
+            and all(_history_value_texts(item, texts, skipped, key == "input") for key, item in body.items())
+        )
+    if kind == "toolResult":
+        if (
+            set(body) != {"toolUseId", "status", "content"}
+            or type(body["toolUseId"]) is not str
+            or type(body["status"]) is not str
+            or type(body["content"]) is not list
+        ):
+            return False
+        # A blank id or status sends the block whole; that is decided before the content is serialized.
+        if any(item and not item.strip() for item in (body["toolUseId"], body["status"])):
+            return False
+        for key, item in body.items():
+            if key == "content":
+                texts.append(_tool_result_admission_text(item))
+            elif not _history_value_texts(item, texts, skipped, False):
+                return False
+        return True
+    if kind == "reasoningContent":
+        # The reasoning text, each signature and a redacted value, each on its own. The names inside a
+        # redacted value that is an object or a list would stand in no single text, so that block goes whole.
+        reasoning = body.get("reasoningText", {})
+        redacted = type(body.get("redactedContent"))
+        return (
+            bool(body)
+            and set(body) <= {"reasoningText", "redactedContent"}
+            and redacted is not dict
+            and redacted is not list
+            and type(reasoning) is dict
+            and all(type(key) is str for key in reasoning)
+            and set(reasoning) <= {"text", "signature"}
+            and all(type(item) is str for item in reasoning.values())
+            and _history_value_texts(body, texts, skipped, False)
+        )
+    return False
+
+
+def _history_admission_plan(message):
+    """Derive the texts in which one stored message reaches the input check: ``(texts, empty, null)``.
+
+    Content goes in the form of its first check: a text block as its text and a tool result as the text
+    of ``_tool_result_admission_text`` for its content list. Machine-written values go singly, in stored
+    order: the result's call id and status; a tool call's id, name and every key and scalar leaf of its
+    input; the reasoning text, each signature and a redacted value; every scalar leaf outside the content
+    list. A block of another shape, or with a single value of only white space, is sent whole as compact
+    JSON, and so is a message that cannot be walked, that holds a field outside ``_HISTORY_MESSAGE_FIELDS``,
+    that holds such a value outside its content list, that yields no text, or whose compact JSON the input
+    check refuses for its size or its encoding (``_history_message_fits_one_check``). A reasoning block
+    whose redacted value is an object or a list is a block of another shape: the names inside such a value
+    would stand in no single text. ``empty`` and ``null`` count the empty strings and nulls that are not
+    sent. The message is never changed, and a value that JSON cannot carry raises as the whole message did.
+    """
+
+    def whole(value):
+        return json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+
+    texts, skipped = [], [0, 0]
+    walked = (
+        type(message) is dict
+        and all(type(key) is str for key in message)
+        and _HISTORY_MESSAGE_FIELDS.issuperset(message)
+        and type(message.get("role")) is str
+        and type(message.get("content")) is list
+    )
+    try:
+        for key, value in message.items() if walked else ():
+            if key == "content":
+                for block in value:
+                    found, counted = [], [0, 0]
+                    try:
+                        known = _history_block_texts(block, found, counted)
+                    except (TypeError, ValueError):
+                        known = False
+                    if not known:
+                        found, counted = [whole(block)], [0, 0]
+                    texts += found
+                    skipped = [skipped[0] + counted[0], skipped[1] + counted[1]]
+            elif not _history_value_texts(value, texts, skipped, False):
+                walked = False
+                break
+    except RecursionError:
+        walked = False
+    serialized = whole(message)
+    if not walked or not texts or not _history_message_fits_one_check(serialized):
+        return [serialized], 0, 0
+    return texts, skipped[0], skipped[1]
+
+
+def _history_admission_texts(message):
+    """Return the ordered texts of ``_history_admission_plan`` for one stored message."""
+    return _history_admission_plan(message)[0]
+
+
 def _record_session_snapshot(agent):
     """Take the public SDK session snapshot in the four-field record inventory.
 
@@ -1814,7 +2002,7 @@ class ToolBindingBackend:
             result = event.result
             if type(result) is not dict or type(result.get("content")) is not list:
                 raise _InputAdmissionHeldError()
-            text = json.dumps(result["content"], ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+            text = _tool_result_admission_text(result["content"])
             curated = READ_ONLY_TOOLS | STATE_CHANGING_TOOLS | {"acquire_model_weights"}
             source_name = (
                 name if type(name) is str and name in curated and name in self._tool_registry else "UNKNOWN"
@@ -2746,12 +2934,11 @@ class ToolBindingBackend:
                 raise _InputAdmissionHeldError() from None
             if check_history:
                 for prior in history or []:
-                    # Assess the whole original message, including nested tool JSON.
+                    # Assess every value of the original message: content in the form of its first
+                    # check, machine-written values singly, any other shape as whole JSON.
                     # Admission never rewrites a historical or signed content block.
                     try:
-                        prior_text = json.dumps(
-                            prior, ensure_ascii=False, allow_nan=False, separators=(",", ":")
-                        )
+                        prior_texts = _history_admission_texts(prior)
                     except (TypeError, ValueError):
                         already_held = self._input_hold
                         self._input_hold = True
@@ -2760,7 +2947,8 @@ class ToolBindingBackend:
                                 "AMLAS_INPUT_HOLD phase=history_qualification reason=history_not_serializable"
                             )
                         raise _InputAdmissionHeldError() from None
-                    self._admit_input(prior_text, "HISTORY_TEXT", immutable=True)
+                    for prior_text in prior_texts:
+                        self._admit_input(prior_text, "HISTORY_TEXT", immutable=True)
             prompt = (
                 admitted_message
                 if not admitted_context

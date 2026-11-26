@@ -64,7 +64,8 @@ Inherits [../AGENTS.md](../AGENTS.md); this document owns the files directly in 
   preserve exact acquired/model/CASE/PREP aliases and build same-correlation
   SFT/GEN/PAIR shells. Original SFT restore is read-only and freshly qualified;
   pending mode creates no new goal, SDK task, model/tool invoke or producer.
-- Every entire immutable captured prefix message obtains current INPUT admission
+- Every text that `_history_admission_texts` derives from the immutable captured
+  prefix messages obtains current INPUT admission
   before public `Snapshot.from_dict`/`Agent.load_snapshot`. Constructor cycle and
   receipts are fresh; no saved checker/policy/witness is restored. Only absent
   TASK retains legacy observation; selected checkpoint/guard/UNKNOWN refusal is
@@ -397,6 +398,59 @@ status poll therefore shows the plain `enrolled` answer and a report read answer
 every busy worker. Why: such a run read `enrolled` like a live run and its resume ended with `unavailable`,
 so a caller could not tell that the run was over or where its report was. Regression:
 `tests/test_normal_run_ended_status.py`.
+
+Restore held by the input check (added 2026-11-25): before it loads the snapshot, the restore sends the
+texts that `_history_admission_texts` derives from each stored message through the selected guardrail's INPUT
+check (see `tui/chat/AGENTS.md`). It sends the completion result through the same check as one text.
+`ChatEngine` raises `_RestoreAdmissionHeldError` when the check holds one of these texts and writes its own
+receipt for it. This error is a subclass of the private hold error. It carries closed
+DATA: `schema_version` 1, `data_only`, `boundary`, `message_position`, `message_count`, `message_role`,
+`message_blocks`, `outcome` and `reason`, and `guardrail_assessment` when the native answer could be read.
+`_resume_normal_prompt_body` writes the same final warning as before, passes the session hash and the DATA to
+`on_restore_held` and returns the same closed failure event as before: stage `snapshot_load`, category
+`Exception`, never transient. No log line changes. In its final step, the resume worker keeps the session hash
+and the DATA beside the `failed` state in `_RESUME_WORKERS`, as `restore_hold`. `_restore_held_answer` builds
+the status answer from that pair for the session hash that owns it. It takes a `prompt_run_status` answer with
+status `unavailable` or `available`, keeps every key and value and adds `run_state` `restore_held`, `message`
+and `restore_hold`. `_restore_held_message` fills fixed sentences from the DATA alone. The blocked, the
+masked and the no-verdict sentence each say `text in message N of M`: the check judges the texts that the
+history form derives from a message, and the DATA names only the message. For masked text the function
+gives the reason by boundary: the message that contains the text is never rewritten (`HISTORY_TEXT`), and the
+completion result that the restore adds is never rewritten (`TOOL_RESULT`). A `HISTORY_TEXT` hold is on a
+stored message or, for a finished job, on the completion result as the last message of the conversation being
+restored. The DATA does not say which of the two it is. `_restore_held_message` names a message without a
+content block by its role alone.
+A `resume_prompt_run` request that answers `resume_state` `failed` for such a restore sends one
+more event after it: the closed `unavailable` projection with the three keys. That holds after the worker's
+event and after the answer of the 30 s cooldown. The cause in that event is the one of the `failed` answer
+above it: the worker's final step and `admission` capture it under `_PROMPT_REPORT_LOCK` in the step that
+decides the answer, so a record that a later request replaces meanwhile changes nothing. They keep that answer
+beside the cause, and the stream sends the event only when that answer is the last event it sent. An
+operator's run limit ends the stream with `run_completed` and status `outcome_unknown` while the worker still
+restores. Such a stream sends no cause event, also when the caller asks it for more after the restore was
+held. The record keeps the cause for the status answer and for the next request inside the cooldown. In the
+cause event `found` is false, also for a run whose status request answers `available` with `found` true, so a
+caller reads `run_state`. The first event and every `resume_state` event keep their closed shape, so the
+stream function reads what it read before. `_read_prompt_run` reads the record under the lock and returns the
+status answer with the three keys for a status poll. The run is not ended, and the app writes nothing for the
+hold: no report and no pointer. The fine-tuning job, its results and every stored report are kept. What the
+restore wrote before the hold stays. The restore of a run with a finished job checks the stored conversation
+twice, and `context.claim_completion` writes the claim under `continuation` in the run record between the two
+passes, with `status` `consumed-ready` and `invocation_state` `ready`. A hold in the second pass, in
+`claim_normal_completion`, comes after that write, as it did before. The claim has started nothing. No other
+key of the run record changes, and every other row and every stored object stay as they were. The next restore
+takes the claim with the same token. A hold in the pending restore, on the completion result or in the first
+pass leaves the run record and every stored object unchanged. The `failed` state restores again after the
+cooldown, and the next restore replaces the record, so a restore that passes removes the three keys. The
+record is process-local and describes the last restore of the run in this process. A process that ran no
+restore of the run answers as before, and so does a request of another session. What another process did with
+the run since then is not seen here, so the message says what that restore did and makes no statement about
+the run's present state. These holds stay the plain hold and read as before: a hold set before the check and a
+changed guardrail selection, which leave no receipt of the held check, and a hold on the research results that
+`_restore_runtime_research_profile` sends once more, which is not wrapped. A cause that cannot be rendered
+leaves the closed answers as they are. Why: with a guardrail deployed, the verdict on one stored message could
+hold every restore of a run, and status and resume said only `failed`. Regression:
+`tests/test_normal_restore_held_cause.py`.
 
 Final report of a resumed run (added 2026-11-07): the worker of a resumed run publishes its typed report
 through `_retain_prompt_report(..., _resumed=True)` (`_prompt_worker_events(..., report_resumed=True)`), which passes

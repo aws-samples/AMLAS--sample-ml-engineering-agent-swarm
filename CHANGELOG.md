@@ -8,6 +8,22 @@ The numbers `0.01` to `0.05` were assigned afterwards. Releases `0.01` to `0.05`
 
 ## [Unreleased]
 
+## [0.14] - 2026-11-26
+
+### Added
+
+- Added `tests/test_history_admission_form.py` to check how stored messages were sent to the guardrail's input check during a restore and for the earlier conversation of a chat turn. Text blocks were sent as their text. Tool results were sent as the compact JSON of their content lists. Machine-written values were sent on their own in stored order. A message with an unknown field was sent whole. A stored message that the scripted guardrail blocked only as one whole JSON text was admitted when none of its separate texts was blocked. For 400 generated messages, every non-empty string, number and tool-call key stood in exactly one sent text. A blocked or masked text held the restore or the turn. The cases used scripted guardrail answers.
+- Added `tests/test_input_admission_repeated_value.py` to check how the input check handled a detected value that appeared more than once in the checked text. The guardrail's masked text was forwarded in cases where both copies were masked and where only one was masked. An answer that changed other text was refused. The turn continued after a masked owner prompt, research page or read-only tool result was forwarded. A masked text that had to stay unchanged held the turn. The cases used scripted guardrail answers.
+
+### Changed
+
+- Changed `get_prompt_run_status` and `resume_prompt_run` to say why a restore was held when the deployed guardrail's input check stopped the stored conversation of a run after its worker was replaced. A `resume_prompt_run` request that ended with `resume_state` `failed` because of that hold sent one more `prompt_run_status` event after it. In that event `found` was false; a caller that had read `found` false as nothing to resume should check `run_state` for `restore_held`. The status answer kept its keys and values and added the same three keys: `run_state` with `restore_held`, `message` and `restore_hold`. The three keys gave the position and kind of the held message. They named each content filter or personal-data entity the guardrail reported, with each filter's category and confidence. They contained no matched value or identifier. The only checked text they contained was the held message's role name, `user` or `assistant`. The run stayed resumable. The held restore wrote no report. The fine-tuning job, its results and every stored report were kept. The restore of a run with a finished fine-tuning job checked the stored conversation twice and, as before, recorded its completion claim between the two passes. A restore held in the second pass had already recorded that claim. The claim started nothing and changed no other stored data; the next restore took the same claim. The runtime process that ran the restore kept the cause until the next restore of that run started in the same process. `tests/test_normal_restore_held_cause.py` checked these answers with scripted guardrail answers.
+
+### Fixed
+
+- Fixed runs that were held when a deployed guardrail masked a prompt, a research page or the result of a read-only tool that contained the same detected value more than once: when the masked answer passed the other input checks, the text went on in the guardrail's masked form and the run continued. A masked answer that failed one of those checks still held the run.
+- Fixed prompt runs that stayed held at the restore after their worker was replaced during fine-tuning because a deployed guardrail gave a whole stored message a verdict that none of its parts carried. A blocked, masked or unassessed text still held the run.
+
 ## [0.13] - 2026-11-25
 
 ### Added

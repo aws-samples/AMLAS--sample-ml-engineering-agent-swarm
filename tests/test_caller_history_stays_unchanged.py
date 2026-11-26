@@ -54,23 +54,18 @@ def earlier_turns():
     ]
 
 
-def as_guard_text(message):
-    """The text of one history message as the product presents it to the guard."""
-    return json.dumps(message, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+def as_guard_texts(message):
+    """The texts of one history message as the product presents them to the guard: its role, then its text."""
+    return [message["role"], *[block["text"] for block in message["content"]]]
 
 
-def history_texts(calls):
-    """The guard calls whose text is one serialised history message."""
-    found = []
-    for call in calls:
-        text = call["content"][0]["text"]["text"]
-        try:
-            value = json.loads(text)
-        except ValueError:
-            continue
-        if type(value) is dict and "role" in value:
-            found.append(text)
-    return found
+def history_texts(calls, question):
+    """The guard calls of one turn between its question and its tool result: the history texts."""
+    texts = [call["content"][0]["text"]["text"] for call in calls]
+    if not texts:
+        return []
+    assert texts[0] == question and json.loads(texts[-1]) == [{"text": w.RAW}]
+    return texts[1:-1]
 
 
 @pytest.mark.parametrize("guard", [True, False], ids=["guard-bound", "no-guard"])
@@ -84,7 +79,10 @@ def test_one_history_list_passed_on_two_turns_stays_equal_and_reads_the_same_to_
         backend = binding.ToolBindingBackend(Settings(), model=model)
     history = earlier_turns()
     built = copy.deepcopy(history)
-    expected = [as_guard_text(message) for message in built] if guard else []
+    expected = [text for message in built for text in as_guard_texts(message)] if guard else []
+    assert expected == (
+        ["user", "ordinary earlier question", "assistant", "ordinary earlier reply"] if guard else []
+    )
 
     shown = []
     for question in ("ordinary question", "ordinary second question"):
@@ -97,7 +95,7 @@ def test_one_history_list_passed_on_two_turns_stays_equal_and_reads_the_same_to_
         assert binding._record_messages(model.messages[0][: len(built)]) == built
         # The caller's dictionaries are equal to what the caller built.
         assert history == built
-        shown.append(history_texts(client.calls[mark:]))
+        shown.append(history_texts(client.calls[mark:], question))
     # The guard was shown the same history text on both turns: the messages exactly as the caller built them.
     assert shown == [expected, expected]
 

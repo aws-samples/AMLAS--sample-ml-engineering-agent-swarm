@@ -7,12 +7,13 @@ import hmac
 import json
 import re
 import secrets
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from botocore import exceptions as sdk_errors
 
-from .guardrail_assessment import _CONTENT, _LEVELS, _PII
+from .guardrail_assessment import _CONTENT, _LEVELS, _PII, project_guardrail_trace
 
 MAX_INPUT_BYTES = 65536
 MAX_RECORDS = 128
@@ -179,6 +180,10 @@ class InputAdmissionReceipt:
     data_only: bool = field(default=True, init=False)
     native_admission: bool = field(default=False, init=False)
     quality_success: bool = field(default=False, init=False)
+    # Outside the closed field inventory, the constructor and to_dict: what the guardrail reported for a text
+    # that was not admitted unchanged, as a GuardrailAssessment of closed enums. The checker sets it beside the
+    # receipt for readers in this process. It never holds a match, an output or a text.
+    assessment = None
 
     def __post_init__(self):
         if (
@@ -354,6 +359,7 @@ class InputAdmissionChecker:
         characters = len(text) if type(text) is str else None
         measurement = "UNAVAILABLE"
         categories = blocking_categories = ()
+        native = None
 
         def decision(outcome, reason, body=None, transport=None):
             receipt = InputAdmissionReceipt(
@@ -375,6 +381,8 @@ class InputAdmissionChecker:
                 transport_diagnostic=transport,
                 blocking_categories=blocking_categories,
             )
+            if native is not None and outcome != "ALLOW":
+                object.__setattr__(receipt, "assessment", _reported_assessment(native))
             return InputAdmissionDecision(outcome, body, receipt)
 
         if type(text) is not str or not text:
@@ -430,6 +438,7 @@ class InputAdmissionChecker:
         if parsed is None:
             return decision("UNKNOWN", "NATIVE_INVALID")
         action, records, masks = parsed
+        native = response
         categories = tuple(sorted({policy + ":" + category for policy, category, _, _ in records}))
         if any(record_action == "NONE" and detected is True for _, _, record_action, detected in records):
             return decision("UNKNOWN", "NATIVE_INVALID")
@@ -457,6 +466,16 @@ class InputAdmissionChecker:
         if replacement is None:
             return decision("UNKNOWN", "MASK_INVALID")
         return decision("ANONYMIZED", "NATIVE_MASKED", replacement)
+
+
+def _reported_assessment(response):
+    """Closed enums of a validated native answer; its matches, outputs and texts are never read."""
+    try:
+        collection = {str(index): item for index, item in enumerate(response["assessments"])}
+        return project_guardrail_trace({"guardrail": {"inputAssessment": collection}})
+    except Exception:
+        # A projection for a later reader never changes the decision of this check.
+        return None
 
 
 def _parse_response(response, config, utf16_units):
@@ -568,12 +587,54 @@ def _service_mask(response, original, masks):
             return None
     except UnicodeEncodeError:
         return None
-    if replacement == original or len(set(masks)) != len(masks):
+    if replacement == original:
         return None
+    # Two comparisons read a masked answer, and either one supplies the service text. The first takes one
+    # record for each reported value with every copy replaced. Only it reads a match that begins with "{".
+    if _every_copy_replaced(original, replacement, masks):
+        return replacement
+    # The service reports one record for each occurrence it detected and masks only those occurrences.
+    # Every record needs a part of the original of its own, so records longer in total cannot be met.
+    if sum(len(match) for _, match in masks) > len(original):
+        return None
+    owed = Counter(masks)
+    values = [match for _, match in owed]
+    for index, value in enumerate(values):
+        if any(value in other or other in value for other in values[index + 1 :]):
+            return None
+    # Walk both texts from the start. Equal characters are stepped over. Anywhere else the service text
+    # must hold the placeholder of a reported match's own category where the original holds that match.
+    # A match that begins with "{" is stepped over as equal text, so it is never read as replaced.
+    i = j = 0
+    while j < len(replacement):
+        if i < len(original) and original[i] == replacement[j]:
+            i += 1
+            j += 1
+            continue
+        for category, match in owed:
+            token = "{" + category + "}"
+            if replacement.startswith(token, j) and original.startswith(match, i):
+                owed[category, match] -= 1
+                i += len(match)
+                j += len(token)
+                break
+        else:
+            return None
+    # Nothing of the original may be left over, and every record needs a replacement of its own.
+    if i != len(original) or any(left > 0 for left in owed.values()):
+        return None
+    return replacement
+
+
+def _every_copy_replaced(original, replacement, masks):
+    # One record for each reported value, each value in the original, and no value inside another. The
+    # service text must be the original with every copy of every value replaced, the longest value first.
+    if len(set(masks)) != len(masks):
+        return False
     for i, (_, match) in enumerate(masks):
         if match not in original or any(match in other or other in match for _, other in masks[i + 1 :]):
-            return None
+            return False
     expected = original
     for category, match in sorted(masks, key=lambda item: len(item[1]), reverse=True):
         expected = expected.replace(match, "{" + category + "}")
-    return replacement if replacement == expected else None
+    return replacement == expected

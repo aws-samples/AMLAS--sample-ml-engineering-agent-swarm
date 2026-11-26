@@ -317,7 +317,11 @@ def test_full_sdk_task_budget_refuses_before_original_sft_create(
         monkeypatch.setattr(ToolBindingBackend, "_capture_normal_sft_call", capture)
         try:
             await reach_boundary(state, monkeypatch, observed)
-            assert len(admitted) == 2 and all(type(value) is str for value in admitted)
+            # Each history message was admitted as its role word and its text.
+            assert admitted == [
+                value for message in history for value in (message["role"], message["content"][0]["text"])
+            ]
+            assert all(type(value) is str for value in admitted)
             assert state.native.calls == [], (
                 "oversized full SDK TASK was discovered only after native SFT Create"
             )

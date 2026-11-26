@@ -168,6 +168,7 @@ def _restore_runtime_research_profile(owner, context, task, token, snapshot):
         _task_causal_prefix,
         current_normal_run,
     )
+    from .tool_binding_backend import _tool_result_admission_text
 
     backend = owner.tool_backend
     state = backend._qualify_research_binding(active=False)
@@ -255,7 +256,7 @@ def _restore_runtime_research_profile(owner, context, task, token, snapshot):
         ):
             raise ValueError("original research reconstruction owner changed")
         for result in results.values():
-            text = json.dumps(result, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+            text = _tool_result_admission_text(result["content"])
             backend._admit_input(text, "TOOL_RESULT", immutable=True, tool_name="research_fetch_urls")
             backend._qualify_research_binding(active=False)
         state["attempted"] = attempted

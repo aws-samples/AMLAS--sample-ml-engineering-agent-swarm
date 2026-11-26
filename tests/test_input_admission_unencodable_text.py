@@ -130,9 +130,11 @@ HELD = {
         1,
     ),
     "history": (
-        [("OWNER_PROMPT", *ALLOWED), ("HISTORY_TEXT", *ALLOWED), ("HISTORY_TEXT", *INVALID)],
+        # The earlier question with its role word is allowed. The reply cannot be encoded, so it is one
+        # text, the whole message, and that text is refused.
+        [("OWNER_PROMPT", *ALLOWED), *[("HISTORY_TEXT", *ALLOWED)] * 2, ("HISTORY_TEXT", *INVALID)],
         0,
-        [QUESTION, '{"role":"user","content":[{"text":"ordinary earlier question"}]}'],
+        [QUESTION, "user", "ordinary earlier question"],
         [ADMISSION_HOLD],
         0,
     ),
@@ -169,7 +171,7 @@ def test_guard_bound_turn_with_ordinary_text_is_admitted_and_shown_to_the_guard(
     assert seen["status"] == "admitted" and seen["backend"]._input_hold is False
     assert all(record[1:] == ALLOWED for record in seen["records"])
     assert [record[0] for record in seen["records"]] == (
-        ["OWNER_PROMPT", "HISTORY_TEXT", "HISTORY_TEXT", "TOOL_RESULT"]
+        ["OWNER_PROMPT", "HISTORY_TEXT", "HISTORY_TEXT", "HISTORY_TEXT", "HISTORY_TEXT", "TOOL_RESULT"]
         if where == "history"
         else ["OWNER_PROMPT", "TOOL_RESULT"]
     )

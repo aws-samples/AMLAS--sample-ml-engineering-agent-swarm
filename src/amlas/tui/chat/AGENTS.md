@@ -88,7 +88,8 @@ Inherits [../AGENTS.md](../AGENTS.md); this document owns the files directly in 
 - Normal completion assembly remains limited to the existing single-SFT batch.
   Its new source-generated result obtains fresh immutable `TOOL_RESULT` admission
   with `submit_qwen_sft` before consume CAS, Agent construction or snapshot load;
-  every complete history message also receives current immutable INPUT admission.
+  every complete history message also receives current immutable INPUT admission,
+  text by text as `_history_admission_texts` derives them (History admission form).
   The original TASK/prefix and non-message SDK state remain unchanged. First
   claim/load grants no inference, takeover, wake or final report; current guards
   and the broader required recovery remain in force.
@@ -170,7 +171,8 @@ Inherits [../AGENTS.md](../AGENTS.md); this document owns the files directly in 
   preserve exact acquired/model/CASE/PREP aliases and build same-correlation
   SFT/GEN/PAIR shells. Original SFT restore is read-only and freshly qualified;
   pending mode creates no new goal, SDK task, model/tool invoke or producer.
-- Every entire immutable captured prefix message obtains current INPUT admission
+- Every text that `_history_admission_texts` derives from the immutable captured
+  prefix messages obtains current INPUT admission
   before public `Snapshot.from_dict`/`Agent.load_snapshot`. Constructor cycle and
   receipts are fresh; no saved checker/policy/witness is restored. Only absent
   TASK retains legacy observation; selected checkpoint/guard/UNKNOWN refusal is
@@ -746,10 +748,66 @@ or history rewrite follows from the causal comparison.
   The receipt's `character_count` stays the number of code points.
   The unit was recorded for one guardrail in one Region.
 
+- A verified service substitution in `input_admission.py` is the service's own output text.
+  It is forwarded as the service returned it.
+  The native service reported one personal-data record for each occurrence it detected.
+  It masked only the occurrences it detected.
+  A masked answer is forwarded if either comparison reads the output as the sent text with
+  reported matches replaced.
+  The first comparison takes one record for each reported value.
+  Each reported value must occur in the sent text.
+  It builds the expected text by replacing every copy of each value with its `{CATEGORY}`
+  placeholder, longest value first.
+  It replaces values of equal length in the order of their records.
+  The order of the records can change a decision only through this rule.
+  The output must match the expected text.
+  A later replacement can replace a shorter match inside a placeholder already inserted.
+  Only the first comparison can read a match that begins with `{`.
+  The native service reported template text that reads as an address as one such match.
+  Only the first comparison can read two overlapping matches when only the longer one is replaced.
+  The second comparison reads the sent text and the output text side by side from the start.
+  Equal characters pass.
+  Where the texts differ, the output must hold a `{CATEGORY}` placeholder.
+  At that place, the sent text must hold a reported match of the same category.
+  Each reported pair of category and match needs at least one such replacement per record.
+  No part of the sent text may be left over.
+  The second comparison passes an opening `{` as equal text before checking for a replacement.
+  It therefore never reads an answer with a record for a match that begins with `{`.
+  The second comparison never searches inside an inserted placeholder.
+  It refuses records whose matches are longer in total than the sent text before any match is
+  compared with another: each record needs a part of the sent text of its own.
+  Only the second comparison can read an answer with two records for one match.
+  The first comparison replaces every copy of each reported match.
+  Its expected text can hold a reported match again only where a replacement wrote it, wholly
+  or in part, as when a match is its own placeholder.
+  Unless the first comparison writes the copy again, only the second comparison can read an
+  answer with an unreplaced copy of a reported match.
+  Both comparisons can read a match that begins with `}`.
+  An answer that neither comparison reads stays UNKNOWN with MASK_INVALID and no forwardable body.
+  Refused cases in the regression file include a changed, added or dropped character, a
+  placeholder of another category, a placeholder where the sent text held other text, two records
+  for one match with one replacement, a reported match missing from the sent text, and output
+  equal to the sent text.
+  The answer also stays UNKNOWN with MASK_INVALID if one reported match contains the other
+  or equals it under another category.
+  Neither comparison reads a replaced match that begins with `{` beside a repeated match with
+  one record for each copy.
+  Neither comparison reads a replaced match that begins with `{` beside a reported match with
+  one copy left unreplaced, unless the first comparison writes that copy again as above.
+  The checks of the output list, size and encoding come before both comparisons and are unchanged.
+  A copy of a reported value that the service did not replace stays readable in the forwarded text.
+  The product replaces nothing itself.
+  A caller that requires unchanged text still holds on any replacement.
+  Its receipt reads ANONYMIZED with NATIVE_MASKED, as it does when the value appears once.
+  The receipt records the service's answer; the hold is the caller's rule for unchanged text.
+  The record rule was observed for one guardrail in one Region.
+  Regression: `tests/test_input_admission_repeated_value.py`.
+
 - One instance-local AfterToolCall coordinator explicitly captures producer custody
   before checking its new projection; readonly content admission precedes planning
   capture. SDK reverse callback registration cannot reorder these internal steps.
-  Whole original history messages include nested results and are checked immutably.
+  Original history messages are checked immutably in the texts of
+  `_history_admission_texts`; a nested result is one text, its content list.
   Source-owned holds survive SDK hook wrappers and warm refusal, retain original
   records/callbacks and refuse completion before consumption. Admission receipts
   retain at most128 records; these source checks grant no native ML acceptance.
@@ -759,6 +817,89 @@ or history rewrite follows from the causal comparison.
   an accepted store record and latches refusal before further model dispatch.
   Genuine guard-disabled legacy history passes through without admission-only
   serialization; prior holds or selected-config drift still refuse.
+
+### History admission form (added 2026-11-25)
+
+A run whose worker is not replaced checks the owner prompt, each tool result and each model text on its own.
+One compact JSON text per stored message was a unit that only the history check used. The guardrail gave
+verdicts on such a text that none of its parts carried, and such a verdict held the restore of a run at every
+attempt.
+
+`_history_admission_texts(message)` in `tool_binding_backend.py` supplies the ordered texts for one stored
+message. `ChatEngine.assemble_normal_completion` admits those texts before the completion claim,
+`ChatEngine.claim_normal_completion` admits them again after the claim, `ChatEngine.load_normal_snapshot`
+admits them on a pending restore, and `ToolBindingBackend._chat_with_tools_once` admits them for the earlier
+conversation of a chat turn. These are the only history admission sites. Each site admits every text as
+immutable `HISTORY_TEXT`, in message order.
+
+- Content goes in the form of its first check. A user or assistant `text` block is sent as its text, not as
+  JSON. A `toolResult` content list is sent as one compact JSON text through
+  `_tool_result_admission_text(content)`. `_guard_new_tool_projection` uses the same function for the first
+  check of a fresh result. The function keeps the key order of the content list, and a checkpoint stores
+  every object with sorted keys. So the text of a stored tool result at a restore is byte-equal to the text of
+  its first check when the content list has the same key order. A `text` item has one key, so its text is
+  always byte-equal. A stored `json` item whose keys the tool wrote in another order is sent with sorted keys
+  at a restore; the two texts hold the same JSON value and differ in key order only. At a restore,
+  `_restore_runtime_research_profile` admits each stored research result once more as immutable `TOOL_RESULT`
+  with `research_fetch_urls`; its text is that same text of the content list, not the JSON of the whole result.
+- Machine-written values go singly, in stored order: a tool result's `toolUseId` and `status`; a tool call's
+  `toolUseId`, `name`, and each key and scalar leaf of its `input`; a reasoning text, a `signature` and a
+  `redactedContent` value; each scalar leaf outside `content`, including `role` and the values in `metadata`.
+  A string is sent as it is. A number or boolean is sent as its JSON text.
+- A block outside the exact shapes of `text`, `toolUse`, `toolResult` and `reasoningContent` is sent whole as
+  one compact JSON text. So is a block with a single value of only white space: the native service returned no
+  policy record for white space alone, and the checker reads that answer as not assessed. A
+  `reasoningContent` block whose `redactedContent` is an object or a list is also sent whole as one compact
+  JSON text, because the names inside that value would otherwise stand in no single text. A single redacted
+  value is still sent on its own. A message is sent
+  whole as one compact JSON text if it is not an object with a string `role` and a list `content`, if it holds
+  a field other than `role`, `content` and `metadata` (`_HISTORY_MESSAGE_FIELDS`), if it holds outside
+  `content` a value that is not plain JSON data or a value of only white space, if it yields no text, or if
+  its compact JSON is over 65,536 UTF-8 bytes or cannot be encoded as strict UTF-8
+  (`_history_message_fits_one_check`). A message that is sent whole sends no text of a part beside it. The
+  checker answers `UNKNOWN` with `INPUT_LIMIT` for a text over the limit and `UNKNOWN` with `INVALID_INPUT`
+  for a text that strict UTF-8 cannot encode, each without a native call. The whole-message text received
+  the same refusal when every stored message was one text. The refusal also applies when each text of the
+  message fits on its own, for example a user message with two tool results that each passed their first
+  check. A lone surrogate in a field name outside a tool call's `input` stands in no single text; strict
+  UTF-8 cannot encode the whole message, so the message is refused. Nothing is skipped silently.
+- An empty string and null are not sent on their own: the checker refuses an empty text.
+  `_history_admission_plan` returns the texts and counts both. Field names outside a tool call's `input` are
+  structure and are not sent on their own. The form reads three fields: `role`, `content` and `metadata`.
+  A message with any other field is sent whole. The name of that field stands in a checked text.
+  The names of fields nested in `metadata` stay structure. `_record_messages` removes the agent SDK's
+  `tracking_id` before a conversation is stored. A stored message never holds `tracking_id`. A message
+  that carries it is sent whole.
+
+Every string, number and boolean of the stored message stands in exactly one text, except empty strings.
+Texts follow the stored order of message fields, content blocks and block fields. Equal texts are sent again;
+nothing is cached. A value that JSON cannot carry still raises `TypeError` or `ValueError`, and a chat turn
+still holds with `AMLAS_INPUT_HOLD phase=history_qualification reason=history_not_serializable`.
+
+A blocked, masked, unassessed or oversized text still causes a sticky hold before any later text or load.
+The 65,536-byte limit and the strict UTF-8 rule apply to the compact JSON of the whole message, measured in
+UTF-8 bytes; `_HISTORY_MESSAGE_MAX_BYTES` equals `MAX_INPUT_BYTES` of `input_admission.py`. The limit is
+inclusive: a message of exactly 65,536 bytes is not sent whole for its size. No text is larger than the
+compact JSON of its message, so each text of a message that is sent text by text fits the limit and can be
+encoded. The completion result still receives its own `TOOL_RESULT` admission as the compact JSON of the
+whole result with `submit_qwen_sft`. The
+stored snapshot, the integrity comparisons and the model input do not change. Disabled checks make no
+guardrail call, and a chat turn then does not derive the earlier conversation. Admission receipts still
+retain the newest 128 records.
+
+The form applies to plain JSON data: objects whose keys are exactly `str`, lists, strings, numbers, booleans
+and null. A checkpoint is the output of `json.loads` and holds only such data, and the engine builds the
+chat history of a turn from plain dictionaries. The helper compares a key only after it has checked that
+the key's type is exactly `str`. A block whose kind or field name has another type is not walked: it is sent
+whole as one compact JSON text, or it raises `TypeError` when JSON cannot carry the key, as the whole message
+did. A message with such a top-level field name is sent whole in the same way. A `toolResult` block with a
+blank `toolUseId` or `status` is sent whole; the helper decides that before it serializes the content list.
+The form makes no promise for other Python objects, for example a mapping whose items change between two
+reads.
+
+Each text that the checker assesses takes one `ApplyGuardrail` call, so a restore makes more calls than
+before. Separate texts establish no verdict on the values of a message together, and a single value can
+still be refused. Regression: `tests/test_history_admission_form.py`.
 
 ### Completion receipt research restoration
 
@@ -880,3 +1021,46 @@ no log line, no new response action, and no run-record field.
 The normal path stays first in the function. Its statements stay in the same order.
 `tests/test_recovery_report_record.py::test_order_inside_continue_normal_completion` checks that order. Keep changes
 to the held end after the normal path in the source. See `tests/test_normal_resumed_run_held.py` for the tests.
+
+### Cause of a held restore admission (added 2026-11-25)
+
+`InputAdmissionReceipt` has one attribute outside its closed field list, its constructor and `to_dict`:
+`assessment`. The checker sets it when `_parse_response` read the native answer and the outcome is not
+`ALLOW`. The value is the `GuardrailAssessment` that `project_guardrail_trace` builds from the answer's
+`assessments`, with direction `INPUT` and closed enums for policy, category, action, confidence, detected and
+filter strength. An answer with more than eight assessments gives the status `invalid` and no record. The
+attribute stays `None` for an admitted text, an answer that `_parse_response` refused, a transport failure and
+a refused size. An answer that `_parse_response` read and a later step of the check refused has the outcome
+`UNKNOWN` and keeps the assessment. Its reason is `NATIVE_INVALID`, for example for a record that is detected
+with the action `NONE`, `NATIVE_UNKNOWN` for an answer that says the guardrail acted and names no record with
+a mask or a block, or `MASK_INVALID` for a masked output that does not fit the reported matches. A projection
+failure leaves `None` and never changes the decision. Reports, responses and receipt records keep their keys,
+and a receipt built from its serialized record equals the original. Matches, outputs, action reasons and texts
+are never read.
+
+`engine.py` sends the restore's immutable admissions through `_admit_restore_input`: the completion result
+with `TOOL_RESULT` and the first history pass in `assemble_normal_completion`, the second history pass in
+`claim_normal_completion`, and the pass in `load_normal_snapshot`. The wrapper gets the compact JSON of the
+whole completion result. For each stored message, the restore calls the wrapper once per text that
+`_history_admission_texts` derives from it. Each such call includes the message position, the message count
+and the message. The wrapper calls `backend._admit_input` with the same text and boundary, with
+`immutable=True` and, for the completion result, with the tool name. The guardrail receives exactly the texts
+of the history admission form in their order. The second history pass follows `context.claim_completion`,
+which writes the claim
+under `continuation` in the run record. A hold in that pass leaves the claim in the state `ready`, and the
+next restore takes it with the same token. A hold on the completion result, in the first history pass or in
+`load_normal_snapshot` leaves the run record and every stored object unchanged. When that call holds, it
+raises `_RestoreAdmissionHeldError` if the newest receipt is one that this call wrote, is an
+`InputAdmissionReceipt` for the same boundary and has the outcome `BLOCKED`, `ANONYMIZED` or `UNKNOWN`.
+`_RestoreAdmissionHeldError` is a subclass of `_InputAdmissionHeldError`. It carries the closed DATA of
+`_restore_hold_data`: the boundary; the position of the message and the message count of the conversation
+being restored, counted from 1, with the completion result as the last message; the role; the sorted block
+kinds from `text`, `toolUse`, `toolResult`, `reasoningContent` and `other`; the receipt's outcome and reason;
+and the receipt's assessment when it is a `GuardrailAssessment`. The DATA names the message. It does not say
+which text of the message was held. The role is `user` or `assistant`. The history form sends the role name
+as a text of its own. No other checked text is copied. No match, digest, guardrail identifier, tool name or
+tool-use id is copied. Every other hold is raised as it is: a hold set before the check, a hold
+raised by the checker selection and a hold whose receipt another checker type wrote. The hold latch, its
+`AMLAS_INPUT_HOLD` line, the order of the checks and the refusal before the snapshot load are unchanged. The
+third send of the research results in `research_runtime_profile.py` is not wrapped. The app reads the DATA
+(see `src/amlas/AGENTS.md`). Regression: `tests/test_normal_restore_held_cause.py`.
